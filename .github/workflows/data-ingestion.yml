@@ -1,0 +1,67 @@
+name: Data Ingestion Pipeline
+
+on:
+  # Run daily at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * *'
+  
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      endpoint:
+        description: 'Specific endpoint to process (optional)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - setlists
+          - shows
+          - songs
+          - venues
+          - jamcharts
+          - latest
+          - metadata
+          - links
+          - uploads
+          - appearances
+
+jobs:
+  ingest-data:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Run data ingestion
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        EMBEDDING_MODEL: text-embedding-3-small
+        EMBEDDING_DIMENSIONS: 1536
+        CHAT_MODEL: gpt-4
+        PORT: 3000
+        NODE_ENV: production
+        LOG_LEVEL: info
+        BAND_NAME: ${{ secrets.BAND_NAME }}
+      run: |
+        echo "🚀 Starting data ingestion pipeline..."
+        echo "📅 Scheduled run: $(date)"
+        echo "�� Target endpoint: ${{ github.event.inputs.endpoint || 'all' }}"
+        
+        # Run the test script which calls the production function
+        npm test
+        
+        echo "✅ Data ingestion completed successfully!"
