@@ -1,28 +1,109 @@
 agent:
   description: >
-    I am building a full-stack RAG chatbot using Supabase, but I'm currently focused on building the backend RAG pipeline only.
-    This includes embedding JSON data, storing vectors in Supabase with pgvector, and writing Edge Functions to update data automatically.
-    I'm working locally in Cursor, but connecting to my live Supabase instance.
-    I want clean separation between data ingestion, vector storage, and retrieval logic.
-    Frontend, authentication, and chat UI will come later.
+    You are building a RAG (Retrieval-Augmented Generation) backend system using Supabase, OpenAI, and Edge Functions.
+    The project will ingest band/artist-related JSON data from a set of public API endpoints listed on https://elgoose.net/api/docs/.
+    Your job is to fetch and process this data using Supabase Edge Functions, generate OpenAI embeddings, and store everything in a vectorized documents table.
+    You are working in a local environment using Cursor, but the Supabase database is hosted live.
 
-  technologies:
-    - Supabase (PostgreSQL, pgvector, auth, Edge Functions)
-    - Supabase CLI for local testing and deployment
-    - OpenAI (Embeddings API, text-embedding-ada-002)
-    - Deno (for Edge Functions)
-    - Python 3.10+ (for testing scripts)
-    - dotenv (.env for local config)
-    - SQL (for Supabase schema + RPC functions)
+  project_overview: >
+    The goal of the project is to build a backend pipeline that:
+      - Automatically ingests JSON data from a set of predefined API endpoints
+      - Embeds that data using OpenAI embeddings (text-embedding-3-small)
+      - Stores the chunks and metadata in a Supabase `documents` table
+      - Uses Supabase Edge Functions to fetch, process, embed, and insert the data
+    This project will later power a RAG chatbot frontend, but for now focuses only on the backend pipeline.
 
-  rules:
-    - All OpenAI and Supabase keys are loaded from `.env` (or set via `supabase secrets`)
-    - JSON data is chunked before embedding
-    - Each chunk becomes a row in the `documents` table
-    - `documents` includes: content, embedding (vector), metadata (jsonb), content_hash (optional), created_at
-    - Retrieval is done via cosine similarity using pgvector
-    - A Supabase RPC function like `match_documents` should be used for efficient search
-    - Edge Functions live in `supabase/functions/{name}/index.ts`
-    - Deno `fetch` is used for both external APIs and OpenAI API calls
-    - No frontend code is needed at this stage
-    - Each code module should be focused and well-commented for future extension
+ Project Title: Band Chatbot RAG Pipeline (Supabase + OpenAI)
+________________________________________
+🔄 Project Overview
+This project builds a RAG (Retrieval-Augmented Generation) pipeline using: - Supabase (PostgreSQL + pgvector + Edge Functions) - OpenAI (for embeddings and chat completions) - ElGoose API (source of music-related JSON data)
+The goal is to ingest structured JSON data from multiple ElGoose API endpoints, embed the content, and store it in a Supabase vector store for semantic retrieval.
+________________________________________
+⚖️ Technologies Used
+•	Supabase (PostgreSQL, pgvector, Edge Functions, Supabase Auth)
+•	Deno (Edge Functions)
+•	OpenAI API (text-embedding-3-small, gpt-4)
+•	JSON chunking + semantic search
+•	Cursor IDE for local dev
+•	.env for secrets management
+________________________________________
+📋 Development Plan
+We will proceed in the following order. All steps should be modular and testable individually.
+PHASE 1: Backend Setup
+Goal: Connect to Supabase and prepare database schema - [ ] Create Supabase project & connect to Cursor - Open Supabase → New project (Postgres 15+) - Copy Project URL, Anon key, Service Role key (Settings → API) - Create .env locally with SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENAI_API_KEY - Install Supabase CLI (npm i -g supabase) and run supabase init - [ ] Enable pgvector - In Supabase SQL Editor, run: create extension if not exists vector; - (Optional) verify with: select extname from pg_extension where extname='vector'; - [ ] Create documents table (vector store) - Columns: id uuid pk default gen_random_uuid(), content text, embedding vector(1536), metadata jsonb, content_hash text, source_method text, source_key text, created_at timestamptz default now() - Indexes: create index on documents using ivfflat (embedding vector_cosine_ops) with (lists = 100); and btree indexes on source_method, source_key - RLS (optional now, required later): enable table RLS; add policies when auth is added - [ ] Create api_sources table (drives ingestion) - Columns: id uuid pk, name text, url text unique, description text, is_active boolean default true, created_at timestamptz default now() - Seed with the initial ElGoose endpoints you want to ingest - [ ] Add RPC for similarity search - match_documents(query_embedding vector, match_threshold float, match_count int) returning id, content, metadata, similarity - Use cosine similarity: 1 - (embedding <=> query_embedding) - [ ] Create schema.sql & apply - Save all the above SQL in supabase/schema.sql - Apply locally via CLI: supabase db push (or run in the dashboard SQL Editor)
+PHASE 2: API Source Loading
+API Source Loading Goal:** Set up ElGoose API ingestion logic - [ ] Add each endpoint (URL + name) to api_sources - [ ] Create a test script or function to fetch from a single endpoint - [ ] Validate and normalize JSON schema
+PHASE 3: Edge Function to Embed Data
+Goal: Create Supabase Edge Function that fetches, chunks, and embeds data - [ ] Create update_json_data edge function - [ ] Load environment variables using Deno.env.get() - [ ] Loop through active endpoints - [ ] Chunk each JSON object (by field length or tokens) - [ ] Call OpenAI embedding endpoint - [ ] Insert embedded chunks into documents
+PHASE 4: Retrieval & Query Function
+Goal: Build RAG-compatible retrieval endpoint - [ ] Add function to embed user query - [ ] Search documents table using pgvector similarity - [ ] Return top-k matching content
+PHASE 5: Frontend & Auth (Later)
+Goal: Expose a chatbot frontend - [ ] Use Supabase Auth for user login - [ ] Build simple chatbot UI (Next.js or other) - [ ] Call backend retrieval function - [ ] Display results and sources
+________________________________________
+📂 Folder Structure (Planned)
+rag-chatbot/
+├── supabase/
+│   ├── schema.sql
+│   └── functions/
+│        └── update_json_data/index.ts
+├── embeddings/
+│   └── embed_json.py
+├── retrieval/
+│   └── query_embed.py
+├── test_data/
+│   └── example_api_response.json
+├── .env.template
+├── cursor.yml
+└── README.md
+________________________________________
+👁️ Environment Variables (.env)
+SUPABASE_URL=https://<your-project-id>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-secret-role-key
+OPENAI_API_KEY=sk-xxx
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIMENSIONS=1536
+PORT=3000
+NODE_ENV=development
+________________________________________
+📜 ElGoose API Endpoints (ingestion context)
+All endpoints are under https://elgoose.net/api/v2 and support .json. Each returns an envelope { error, error_message, data }. Store only data rows.
+•	setlists — song-by-song entries for shows; filter examples: setlists/showyear/2024.json, setlists/songname/<Name>.json.
+Chunk: one row per setlist line; include show date, set, position, song name, venue/city/state; add footnotes/jam notes if present.
+Metadata: show_id, song_slug, venue_slug, city/state/country.
+•	latest — recent setlist lines in recency order; supports order_by, direction, limit.
+Use for deltas; same chunking as setlists.
+•	shows — one row per show (date, artist, venue, location).
+Chunk: one per show; concise narrative string.
+Metadata: show_id, artist, venue_slug, permalink.
+•	songs — song catalog (name, slug, attributes).
+Chunk: one per song; helpful for enrichment & disambiguation.
+Metadata: song_id, song_slug.
+•	venues — venue directory; supports venues.json, venues/state/<STATE>.json, venues/city/<City>.json.
+Chunk: one per venue (name + location).
+Metadata: venue_slug.
+•	jamcharts — curated performance notes with jamchartnote, tracktime, set/position, show context.
+Chunk: one per jam entry (high-value text).
+Metadata: song_slug, showdate, venue_slug, permalink, tracktime.
+•	metadata — extra metadata tied to songs/setlists; e.g., by song_slug.
+Chunk: one per row of descriptive text.
+Metadata: song_slug, type.
+•	links — external links for shows; e.g., links/show_id/<id>.json.
+Chunk: one per link (title/desc).
+Metadata: show_id, url, link_type.
+•	uploads — show posters/featured media.
+Chunk: one per upload (caption/desc).
+Metadata: show_id, asset URLs.
+•	appearances — which person appeared at which show.
+Chunk: one per appearance.
+Metadata: person_id, show_id.
+•	list — enumerations for filters (years, cities, states, countries, venues).
+Not embedded; use to plan fetch loops.
+General ingestion rules - Use api_sources to store the exact URLs you want crawled (plus is_active). - Normalize each data object → build a content string (for embedding) + metadata json. - Compute content_hash to skip duplicates. Store source_method (e.g., setlists) and a stable source_key (show_id or composite). - Prefer incremental runs: poll latest frequently; backfill setlists by year with limits.
+________________________________________
+🔍 References & Resources
+•	ElGoose API Docs: https://elgoose.net/api/docs/
+•	Supabase Docs: https://supabase.com/docs
+•	OpenAI Docs: https://platform.openai.com/docs
+•	pgvector: https://github.com/pgvector/pgvector
+________________________________________
+This doc is designed to be both a guide for you and context for your Cursor AI agent. Update it frequently as the project evolves.
