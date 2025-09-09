@@ -59,9 +59,13 @@ jobs:
       run: |
         echo "🚀 Starting data ingestion pipeline..."
         echo "📅 Scheduled run: $(date)"
-        echo "�� Target endpoint: ${{ github.event.inputs.endpoint || 'all' }}"
+        echo "🎯 Target endpoint: ${{ github.event.inputs.endpoint || 'all' }}"
         
-        # Run the test script which calls the production function
-        npm test
+        # Call the Edge Function directly
+        curl -X POST https://jvvcxraopwbpewisiohu.supabase.co/functions/v1/ingest_raw_data \
+          -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+          -H "Content-Type: application/json" \
+          -d "{}" \
+          --fail-with-body
         
         echo "✅ Data ingestion completed successfully!"
