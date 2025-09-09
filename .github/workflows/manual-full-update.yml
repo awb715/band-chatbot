@@ -1,0 +1,44 @@
+name: Manual Full Update
+on:
+  workflow_dispatch:
+    inputs:
+      endpoint:
+        description: 'Endpoint to fully update'
+        required: true
+        type: choice
+        options:
+          - setlists
+          - songs
+          - shows
+          - venues
+          - latest
+          - metadata
+          - links
+          - uploads
+          - appearances
+
+jobs:
+  full-update:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Full Update ${{ github.event.inputs.endpoint }}
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      run: |
+        echo "🚀 Full update of ${{ github.event.inputs.endpoint }}..."
+        echo "📅 Manual run: $(date)"
+        echo "🎯 Processing mode: manual"
+        
+        # Call the Edge Function with manual mode
+        curl -X POST https://jvvcxraopwbpewisiohu.supabase.co/functions/v1/ingest_raw_data \
+          -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+          -H "Content-Type: application/json" \
+          -d "{\"endpoint\": \"${{ github.event.inputs.endpoint }}\", \"mode\": \"manual\"}" \
+          --fail-with-body \
+          --retry 3 \
+          --retry-delay 10 \
+          --max-time 300 \
+          --silent --show-error
+        
+        echo "✅ ${{ github.event.inputs.endpoint }} full update completed successfully!"

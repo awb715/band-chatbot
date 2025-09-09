@@ -1,0 +1,66 @@
+name: Monitor Data Health
+on:
+  schedule:
+    - cron: '0 3 * * *'  # 1 hour after daily updates
+  workflow_dispatch:
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Check Data Health
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      run: |
+        echo "🔍 Checking data health..."
+        echo "📅 Health check: $(date)"
+        
+        # Check if we have recent data
+        node -e "
+          const { createClient } = require('@supabase/supabase-js');
+          const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+          
+          async function checkHealth() {
+            try {
+              const { data: setlists } = await supabase
+                .from('raw_data_setlists')
+                .select('count', { count: 'exact' })
+                .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+              
+              const { data: songs } = await supabase
+                .from('raw_data_songs')
+                .select('count', { count: 'exact' })
+                .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+              
+              console.log('📊 Recent data counts:');
+              console.log('  Setlists (last 24h):', setlists?.[0]?.count || 0);
+              console.log('  Songs (last 24h):', songs?.[0]?.count || 0);
+              
+              if ((setlists?.[0]?.count || 0) === 0 && (songs?.[0]?.count || 0) === 0) {
+                console.log('⚠️  WARNING: No recent data found!');
+                process.exit(1);
+              } else {
+                console.log('✅ Data health check passed');
+              }
+            } catch (error) {
+              console.error('❌ Health check failed:', error.message);
+              process.exit(1);
+            }
+          }
+          
+          checkHealth();
+        "
+        
+        echo "✅ Data health monitoring completed!"

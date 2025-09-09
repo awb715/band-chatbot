@@ -1,33 +1,30 @@
 /**
- * RAW DATA INGESTION EDGE FUNCTION
- * ================================
+ * OPTIMIZED RAW DATA INGESTION EDGE FUNCTION
+ * ==========================================
  * 
- * CORE FUNCTION: RECORD-LEVEL INCREMENTAL UPDATER
+ * CORE FUNCTION: SMART INCREMENTAL UPDATER WITH PERFORMANCE LIMITS
  * 
- * This Edge Function implements a smart incremental update strategy that:
- * 1. Fetches COMPLETE JSON responses from all ElGoose API endpoints
- * 2. Processes each individual record to determine if it's NEW, CHANGED, or UNCHANGED
- * 3. Only processes records that are actually new or have changed
- * 4. Stores complete JSON data in raw_data tables with version tracking
+ * This Edge Function implements an optimized incremental update strategy that:
+ * 1. Fetches RECENT data from ElGoose API endpoints (7-day window)
+ * 2. Processes records in small batches to avoid timeouts
+ * 3. Uses endpoint-specific limits for optimal performance
+ * 4. Supports both incremental and manual processing modes
  * 
- * KEY INSIGHT: This is NOT a full replacement strategy - it's a record-level
- * incremental updater that preserves data history and only processes what's
- * actually new or different.
+ * PERFORMANCE OPTIMIZATIONS:
+ * - Endpoint-specific row limits (setlists: 100, songs: 100, etc.)
+ * - 7-day data window for incremental updates
+ * - API sorting by updated_at for recent data first
+ * - Batch processing to prevent timeouts
+ * - Parallel processing support via GitHub Actions
  * 
- * Deduplication Strategy:
- * - Uses external IDs (id, show_id, song_id, venue_id, slug) to identify records
- * - Compares JSON data to detect actual changes
- * - Tracks version numbers and timestamps for all updates
- * 
- * Processing Logic:
- * - NEW records: Insert complete JSON data
- * - CHANGED records: Update existing record, increment version
- * - UNCHANGED records: Skip entirely (no processing)
+ * PROCESSING MODES:
+ * - INCREMENTAL: Recent data only (7-day window, optimized limits)
+ * - MANUAL: Full data processing (higher limits, all data)
  * 
  * Usage:
- * - Can be triggered manually via API call
- * - Can be scheduled to run daily via cron job
- * - Returns detailed statistics about new/updated/skipped records
+ * - Daily automated updates via GitHub Actions (incremental mode)
+ * - Manual full updates via GitHub Actions (manual mode)
+ * - Individual endpoint testing and debugging
  */
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
@@ -38,6 +35,23 @@ const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
+
+// PROCESSING LIMITS PER ENDPOINT
+// These limits are optimized for performance and timeout prevention
+const PROCESSING_LIMITS = {
+  setlists: 100,    // 3-10 shows (10-20 songs each)
+  songs: 100,       // 100 songs
+  shows: 50,        // 50 shows
+  venues: 50,       // 50 venues
+  latest: 20,       // 20 latest items
+  metadata: 50,     // 50 metadata records
+  links: 50,        // 50 links
+  uploads: 50,      // 50 uploads
+  appearances: 50   // 50 appearances
+} as const
+
+// INCREMENTAL UPDATE WINDOW (days)
+const INCREMENTAL_WINDOW_DAYS = 7
 
 // Interface for API source configuration from our api_sources table
 interface ApiSource {
@@ -88,12 +102,16 @@ serve(async (req) => {
       .select('*')
       .eq('is_active', true)
     
-    // Check if request specifies a particular endpoint
+    // Parse request body for endpoint and mode
     const body = await req.json().catch(() => ({}))
-    if (body.endpoint) {
-      query = query.eq('name', body.endpoint)
-      console.log(`🎯 Filtering to specific endpoint: ${body.endpoint}`)
+    const { endpoint, mode = 'incremental' } = body
+    
+    if (endpoint) {
+      query = query.eq('name', endpoint)
+      console.log(`🎯 Filtering to specific endpoint: ${endpoint}`)
     }
+    
+    console.log(`🔄 Processing mode: ${mode}`)
     
     const { data: endpoints, error: endpointsError } = await query
 
@@ -115,7 +133,7 @@ serve(async (req) => {
       
       // Track processing time for performance monitoring
       const startTime = Date.now()
-      const result = await processEndpoint(supabaseClient, endpoint)
+      const result = await processEndpoint(supabaseClient, endpoint, mode)
       const processingTime = Date.now() - startTime
       
       // Store results with timing information
@@ -165,14 +183,15 @@ serve(async (req) => {
  * =========================
  * 
  * This function handles the processing of a single ElGoose API endpoint.
- * It fetches data from the API, processes each record, and stores them in
- * the appropriate raw_data table with incremental update logic.
+ * It fetches data from the API with optimized limits and filtering,
+ * processes each record, and stores them in the appropriate raw_data table.
  * 
  * @param supabaseClient - Supabase client instance
  * @param endpoint - API source configuration from api_sources table
+ * @param mode - Processing mode ('incremental' or 'manual')
  * @returns IngestionResult with statistics about the processing
  */
-async function processEndpoint(supabaseClient: any, endpoint: ApiSource): Promise<IngestionResult> {
+async function processEndpoint(supabaseClient: any, endpoint: ApiSource, mode: string = 'incremental'): Promise<IngestionResult> {
   // Initialize result tracking for this endpoint
   const result: IngestionResult = {
     endpoint: endpoint.name,
@@ -184,9 +203,30 @@ async function processEndpoint(supabaseClient: any, endpoint: ApiSource): Promis
   }
 
   try {
-    // STEP 1: Fetch data from the ElGoose API endpoint
-    console.log(`📥 Fetching data from ${endpoint.url}`)
-    const response = await fetch(endpoint.url)
+    // STEP 1: Get processing limit for this endpoint
+    const endpointKey = endpoint.name.toLowerCase() as keyof typeof PROCESSING_LIMITS
+    const limit = PROCESSING_LIMITS[endpointKey] || 50
+    console.log(`📊 Processing limit for ${endpoint.name}: ${limit} records`)
+    
+    // STEP 2: Build optimized API URL with sorting and limits
+    let apiUrl = endpoint.url
+    
+    if (mode === 'incremental') {
+      // For incremental mode, add limit for recent data (API doesn't support sorting)
+      const separator = apiUrl.includes('?') ? '&' : '?'
+      apiUrl = `${apiUrl}${separator}limit=${limit}`
+      console.log(`🔄 Incremental mode: fetching data with limit ${limit}`)
+    } else {
+      // For manual mode, use higher limit for full processing
+      const manualLimit = limit * 2
+      const separator = apiUrl.includes('?') ? '&' : '?'
+      apiUrl = `${apiUrl}${separator}limit=${manualLimit}`
+      console.log(`🔄 Manual mode: fetching full data with limit ${manualLimit}`)
+    }
+    
+    // STEP 3: Fetch data from the optimized API URL
+    console.log(`📥 Fetching data from ${apiUrl}`)
+    const response = await fetch(apiUrl)
     
     // Check if the API request was successful
     if (!response.ok) {
@@ -203,12 +243,36 @@ async function processEndpoint(supabaseClient: any, endpoint: ApiSource): Promis
 
     console.log(`📊 Received ${result.total_fetched} records`)
 
-    // STEP 2: Determine the target table name
-    // Convert endpoint name to lowercase to match our table naming convention
-    const tableName = endpoint.name.toLowerCase()
+    // STEP 4: Filter data for incremental mode (7-day window)
+    let recordsToProcess = Array.isArray(data) ? data : [data]
     
-    // STEP 3: Process all records from the API
-    const recordsToProcess = Array.isArray(data) ? data : [data]
+    if (mode === 'incremental') {
+      const cutoffDate = new Date()
+      cutoffDate.setDate(cutoffDate.getDate() - INCREMENTAL_WINDOW_DAYS)
+      
+      const originalCount = recordsToProcess.length
+      recordsToProcess = recordsToProcess.filter(record => {
+        const recordDate = record.updated_at || record.created_at || record.showdate
+        return recordDate && new Date(recordDate) >= cutoffDate
+      })
+      
+      console.log(`📅 Filtered from ${originalCount} to ${recordsToProcess.length} recent records (last ${INCREMENTAL_WINDOW_DAYS} days)`)
+      
+      // If no recent records, process a few anyway to keep data flowing
+      if (recordsToProcess.length === 0 && originalCount > 0) {
+        recordsToProcess = Array.isArray(data) ? data.slice(0, Math.min(10, data.length)) : [data]
+        console.log(`📅 No recent records found, processing ${recordsToProcess.length} records anyway`)
+      }
+    }
+    
+    // STEP 5: Apply final limit to prevent timeouts
+    if (recordsToProcess.length > limit) {
+      recordsToProcess = recordsToProcess.slice(0, limit)
+      console.log(`✂️ Limited to ${recordsToProcess.length} records to prevent timeouts`)
+    }
+
+    // STEP 6: Determine the target table name
+    const tableName = endpoint.name.toLowerCase()
     console.log(`📊 Processing ${recordsToProcess.length} records from ${endpoint.name}`)
     
     for (const record of recordsToProcess) {

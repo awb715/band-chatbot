@@ -1,0 +1,54 @@
+name: Daily Incremental Updates
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+  workflow_dispatch:
+    inputs:
+      endpoint:
+        description: 'Specific endpoint to update'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - setlists
+          - songs
+          - shows
+          - venues
+          - latest
+          - metadata
+          - links
+          - uploads
+          - appearances
+
+jobs:
+  incremental-update:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        endpoint: [setlists, songs, shows, venues, latest, metadata, links, uploads, appearances]
+      max-parallel: 3  # Process 3 endpoints simultaneously
+      fail-fast: false  # Continue if one endpoint fails
+    
+    steps:
+    - name: Update ${{ matrix.endpoint }}
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      run: |
+        echo "🔄 Updating ${{ matrix.endpoint }}..."
+        echo "📅 Scheduled run: $(date)"
+        echo "🎯 Processing mode: incremental"
+        
+        # Call the Edge Function with incremental mode
+        curl -X POST https://jvvcxraopwbpewisiohu.supabase.co/functions/v1/ingest_raw_data \
+          -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+          -H "Content-Type: application/json" \
+          -d "{\"endpoint\": \"${{ matrix.endpoint }}\", \"mode\": \"incremental\"}" \
+          --fail-with-body \
+          --retry 3 \
+          --retry-delay 5 \
+          --max-time 60 \
+          --silent --show-error
+        
+        echo "✅ ${{ matrix.endpoint }} update completed successfully!"
