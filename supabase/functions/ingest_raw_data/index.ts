@@ -83,10 +83,19 @@ serve(async (req) => {
 
     // STEP 1: Get all active API sources from our configuration table
     // This tells us which ElGoose endpoints we should fetch data from
-    const { data: endpoints, error: endpointsError } = await supabaseClient
+    let query = supabaseClient
       .from('api_sources')
       .select('*')
       .eq('is_active', true)
+    
+    // Check if request specifies a particular endpoint
+    const body = await req.json().catch(() => ({}))
+    if (body.endpoint) {
+      query = query.eq('name', body.endpoint)
+      console.log(`🎯 Filtering to specific endpoint: ${body.endpoint}`)
+    }
+    
+    const { data: endpoints, error: endpointsError } = await query
 
     if (endpointsError) {
       throw new Error(`Failed to fetch API sources: ${endpointsError.message}`)
@@ -185,7 +194,11 @@ async function processEndpoint(supabaseClient: any, endpoint: ApiSource): Promis
     }
 
     // Parse the JSON response
-    const data = await response.json()
+    const responseData = await response.json()
+    
+    // ElGoose API returns data in format: {"error": false, "data": [...]}
+    // Extract the actual data array from the response
+    const data = responseData.data || responseData
     result.total_fetched = Array.isArray(data) ? data.length : 1
 
     console.log(`📊 Received ${result.total_fetched} records`)
@@ -194,9 +207,11 @@ async function processEndpoint(supabaseClient: any, endpoint: ApiSource): Promis
     // Convert endpoint name to lowercase to match our table naming convention
     const tableName = endpoint.name.toLowerCase()
     
-    // STEP 3: Process each record individually
-    // This allows us to handle errors per record without failing the entire batch
-    for (const record of (Array.isArray(data) ? data : [data])) {
+    // STEP 3: Process all records from the API
+    const recordsToProcess = Array.isArray(data) ? data : [data]
+    console.log(`📊 Processing ${recordsToProcess.length} records from ${endpoint.name}`)
+    
+    for (const record of recordsToProcess) {
       try {
         // Process the individual record (check for duplicates, insert/update)
         const recordResult = await processRecord(supabaseClient, tableName, record, endpoint.url)
@@ -260,7 +275,7 @@ async function processRecord(
   // STEP 2: Check if this record already exists in our database
   // We use the external_id to identify existing records
   const { data: existingRecord } = await supabaseClient
-    .from(`raw_data.${tableName}`)
+    .from(`raw_data_${tableName}`)
     .select('id, data, version')
     .eq('external_id', externalId)
     .single()
@@ -272,7 +287,7 @@ async function processRecord(
     if (dataChanged) {
       // Data has changed - update the existing record
       await supabaseClient
-        .from(`raw_data.${tableName}`)
+        .from(`raw_data_${tableName}`)
         .update({
           data: record,                    // Update with new data
           version: existingRecord.version + 1,  // Increment version number
@@ -288,7 +303,7 @@ async function processRecord(
   } else {
     // STEP 3B: Record doesn't exist - insert as new record
     await supabaseClient
-      .from(`raw_data.${tableName}`)
+      .from(`raw_data_${tableName}`)
       .insert({
         external_id: externalId,    // Store the original ID from ElGoose
         data: record,               // Store the complete JSON record
