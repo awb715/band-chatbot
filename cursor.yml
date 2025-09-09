@@ -1,0 +1,28 @@
+agent:
+  description: >
+    I am building a full-stack RAG chatbot using Supabase, but I'm currently focused on building the backend RAG pipeline only.
+    This includes embedding JSON data, storing vectors in Supabase with pgvector, and writing Edge Functions to update data automatically.
+    I'm working locally in Cursor, but connecting to my live Supabase instance.
+    I want clean separation between data ingestion, vector storage, and retrieval logic.
+    Frontend, authentication, and chat UI will come later.
+
+  technologies:
+    - Supabase (PostgreSQL, pgvector, auth, Edge Functions)
+    - Supabase CLI for local testing and deployment
+    - OpenAI (Embeddings API, text-embedding-ada-002)
+    - Deno (for Edge Functions)
+    - Python 3.10+ (for testing scripts)
+    - dotenv (.env for local config)
+    - SQL (for Supabase schema + RPC functions)
+
+  rules:
+    - All OpenAI and Supabase keys are loaded from `.env` (or set via `supabase secrets`)
+    - JSON data is chunked before embedding
+    - Each chunk becomes a row in the `documents` table
+    - `documents` includes: content, embedding (vector), metadata (jsonb), content_hash (optional), created_at
+    - Retrieval is done via cosine similarity using pgvector
+    - A Supabase RPC function like `match_documents` should be used for efficient search
+    - Edge Functions live in `supabase/functions/{name}/index.ts`
+    - Deno `fetch` is used for both external APIs and OpenAI API calls
+    - No frontend code is needed at this stage
+    - Each code module should be focused and well-commented for future extension
