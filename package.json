@@ -2,16 +2,16 @@
   "name": "band-chatbot",
   "version": "1.0.0",
   "description": "A Retrieval-Augmented Generation (RAG) chatbot system designed specifically for band and music-related interactions.",
-  "main": "index.js",
+  "main": "tests/verify_complete_system.js",
   "type": "module",
   "scripts": {
     "supabase": "npx supabase",
     "db:push": "npx supabase db push",
     "functions:deploy": "npx supabase functions deploy",
     "functions:serve": "npx supabase functions serve",
-    "test": "node test_data/test_raw_data_ingestion.js"
+    "test": "node tests/verify_complete_system.js"
   },
-  "keywords": [],
+  "keywords": ["rag", "chatbot", "music", "supabase", "openai", "elgoose"],
   "author": "",
   "license": "ISC",
   "dependencies": {
