@@ -147,24 +147,21 @@ serve(async (req) => {
     console.log('✅ Silver processing completed:', silverResults)
 
     // ============================================================================
-    // STEP 2: PROCESS SILVER → GOLD (Skip for songs_only and silver_only modes)
+    // STEP 2: PROCESS SILVER → GOLD (disabled unless explicitly requested)
     // ============================================================================
     let goldResults = null;
     
-    if (mode === 'songs_only' || mode === 'silver_only') {
-      console.log('⏭️ Skipping Gold layer processing for this mode')
-    } else {
+    if (mode === 'gold_only') {
       console.log('🥇 Processing Silver → Gold layer...')
-      
       const { data, error: goldError } = await supabase.rpc('aggregate_all_analytics')
-      
       if (goldError) {
         console.error('❌ Gold processing failed:', goldError)
         throw new Error(`Gold processing failed: ${goldError.message}`)
       }
-
       goldResults = data;
       console.log('✅ Gold processing completed:', goldResults)
+    } else {
+      console.log('⏭️ Skipping Gold layer processing (mode != gold_only)')
     }
 
     // ============================================================================
