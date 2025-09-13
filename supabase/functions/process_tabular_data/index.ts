@@ -99,9 +99,23 @@ serve(async (req) => {
       
       if (force_reprocess) {
         console.log('🔄 Force reprocessing - resetting is_processed flags...')
-        await supabase
+        // Diagnostics before reset
+        const { count: beforeTotal } = await supabase
           .from(`raw_data.${table_name}`)
-          .update({ is_processed: false })
+          .select('*', { count: 'exact', head: true })
+        const { count: beforeUnprocessed } = await supabase
+          .from(`raw_data.${table_name}`)
+          .select('*', { count: 'exact', head: true })
+          .eq('is_processed', false)
+        console.log(`📊 raw_data.${table_name} before reset: total=${beforeTotal} unprocessed=${beforeUnprocessed}`)
+
+        await supabase.from(`raw_data.${table_name}`).update({ is_processed: false })
+
+        const { count: afterUnprocessed } = await supabase
+          .from(`raw_data.${table_name}`)
+          .select('*', { count: 'exact', head: true })
+          .eq('is_processed', false)
+        console.log(`📊 raw_data.${table_name} after reset: unprocessed=${afterUnprocessed}`)
       }
       
       // Call specific table function in silver schema via PostgREST
@@ -120,6 +134,12 @@ serve(async (req) => {
         throw new Error(`Silver RPC failed: ${rpcResp.status} ${errText}`)
       }
       silverResults = await rpcResp.json()
+
+      // Diagnostics after ETL
+      const { count: silverCount } = await supabase
+        .from(`silver.${table_name}`)
+        .select('*', { count: 'exact', head: true })
+      console.log(`📊 silver.${table_name} count after ETL: ${silverCount}`)
     } else {
       // Process all tables (default) via PostgREST
       const rpcResp = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/rpc/process_all_tables`, {
