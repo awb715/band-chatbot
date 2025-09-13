@@ -97,6 +97,12 @@ serve(async (req) => {
       // Process specific table
       console.log(`🎯 Processing specific table: ${table_name}`)
       
+      // Diagnostics holders
+      let diag_before_total: number | null = null
+      let diag_before_unprocessed: number | null = null
+      let diag_after_unprocessed: number | null = null
+      let diag_silver_after: number | null = null
+
       if (force_reprocess) {
         console.log('🔄 Force reprocessing - resetting is_processed flags...')
         // Diagnostics before reset
@@ -107,6 +113,8 @@ serve(async (req) => {
           .from(`raw_data.${table_name}`)
           .select('*', { count: 'exact', head: true })
           .eq('is_processed', false)
+        diag_before_total = beforeTotal ?? null
+        diag_before_unprocessed = beforeUnprocessed ?? null
         console.log(`📊 raw_data.${table_name} before reset: total=${beforeTotal} unprocessed=${beforeUnprocessed}`)
 
         await supabase.from(`raw_data.${table_name}`).update({ is_processed: false })
@@ -115,6 +123,7 @@ serve(async (req) => {
           .from(`raw_data.${table_name}`)
           .select('*', { count: 'exact', head: true })
           .eq('is_processed', false)
+        diag_after_unprocessed = afterUnprocessed ?? null
         console.log(`📊 raw_data.${table_name} after reset: unprocessed=${afterUnprocessed}`)
       }
       
@@ -139,7 +148,21 @@ serve(async (req) => {
       const { count: silverCount } = await supabase
         .from(`silver.${table_name}`)
         .select('*', { count: 'exact', head: true })
+      diag_silver_after = silverCount ?? null
       console.log(`📊 silver.${table_name} count after ETL: ${silverCount}`)
+
+      // Attach diagnostics to results
+      if (Array.isArray(silverResults)) {
+        silverResults = silverResults.map((r: any) => ({
+          ...r,
+          debug: {
+            raw_before_total: diag_before_total,
+            raw_before_unprocessed: diag_before_unprocessed,
+            raw_after_unprocessed: diag_after_unprocessed,
+            silver_after_count: diag_silver_after
+          }
+        }))
+      }
     } else {
       // Process all tables (default) via PostgREST
       const rpcResp = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/rpc/process_all_tables`, {
