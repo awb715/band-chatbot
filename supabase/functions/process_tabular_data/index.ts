@@ -77,10 +77,22 @@ serve(async (req) => {
         }
       }
       
-      // Call the master ETL function in silver schema
-      const { data, error } = await supabase.rpc('silver.process_all_tables')
-      silverResults = data
-      silverError = error
+      // Call the master ETL function in silver schema via PostgREST
+      const rpcResp = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/rpc/process_all_tables`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+          apikey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+          'Content-Type': 'application/json',
+          'Content-Profile': 'silver'
+        },
+        body: JSON.stringify({})
+      })
+      if (!rpcResp.ok) {
+        const errText = await rpcResp.text()
+        throw new Error(`Silver RPC failed: ${rpcResp.status} ${errText}`)
+      }
+      silverResults = await rpcResp.json()
     } else if (table_name) {
       // Process specific table
       console.log(`🎯 Processing specific table: ${table_name}`)
@@ -92,15 +104,39 @@ serve(async (req) => {
           .update({ is_processed: false })
       }
       
-      // Call specific table function in silver schema
-      const { data, error } = await supabase.rpc(`silver.process_${table_name}`)
-      silverResults = data
-      silverError = error
+      // Call specific table function in silver schema via PostgREST
+      const rpcResp = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/rpc/process_${table_name}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+          apikey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+          'Content-Type': 'application/json',
+          'Content-Profile': 'silver'
+        },
+        body: JSON.stringify({})
+      })
+      if (!rpcResp.ok) {
+        const errText = await rpcResp.text()
+        throw new Error(`Silver RPC failed: ${rpcResp.status} ${errText}`)
+      }
+      silverResults = await rpcResp.json()
     } else {
-      // Process all tables (default)
-      const { data, error } = await supabase.rpc('silver.process_all_tables')
-      silverResults = data
-      silverError = error
+      // Process all tables (default) via PostgREST
+      const rpcResp = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/rpc/process_all_tables`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+          apikey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+          'Content-Type': 'application/json',
+          'Content-Profile': 'silver'
+        },
+        body: JSON.stringify({})
+      })
+      if (!rpcResp.ok) {
+        const errText = await rpcResp.text()
+        throw new Error(`Silver RPC failed: ${rpcResp.status} ${errText}`)
+      }
+      silverResults = await rpcResp.json()
     }
     
     if (silverError) {
