@@ -15,7 +15,7 @@ This directory contains the automated workflows for the Bronze → Silver data p
 
 ### `silver-ad-hoc.yml`
 - **Purpose**: Run Silver processing on demand
-- **Inputs**: `table_name` (string, optional), `force_reprocess` (boolean)
+- **Inputs**: `table_name` (dropdown: all, songs, shows, setlists, venues, latest, metadata, links, uploads, appearances, jamcharts), `force_reprocess` (boolean)
 - **What does `force_reprocess` do?**
   - Resets Bronze `raw_data.*` records' processed flags for the targeted scope (table or all tables)
   - Triggers ETL to re-read and upsert into `silver.*` even if records were previously processed

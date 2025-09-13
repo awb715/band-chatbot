@@ -4,10 +4,22 @@ on:
   workflow_dispatch:
     inputs:
       table_name:
-        description: 'Specific table to process (leave empty for all)'
-        required: false
-        default: ''
-        type: string
+        description: 'Specific table to process'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - songs
+          - shows
+          - setlists
+          - venues
+          - latest
+          - metadata
+          - links
+          - uploads
+          - appearances
+          - jamcharts
       force_reprocess:
         description: 'Force reprocess (reset flags)'
         required: false
@@ -28,10 +40,10 @@ jobs:
           echo "Table: '${{ github.event.inputs.table_name }}'"
           echo "Force: ${{ github.event.inputs.force_reprocess }}"
 
-          if [ -n "${{ github.event.inputs.table_name }}" ]; then
-            PAYLOAD='{"table_name": "'${{ github.event.inputs.table_name }}'", "force_reprocess": '${{ github.event.inputs.force_reprocess }}'}'
-          else
+          if [ "${{ github.event.inputs.table_name }}" = "all" ]; then
             PAYLOAD='{"mode": "silver_only", "force_reprocess": '${{ github.event.inputs.force_reprocess }}'}'
+          else
+            PAYLOAD='{"table_name": "'${{ github.event.inputs.table_name }}'", "force_reprocess": '${{ github.event.inputs.force_reprocess }}'}'
           fi
 
           RESPONSE=$(curl -X POST \
