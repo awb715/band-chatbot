@@ -5,7 +5,7 @@ on:
     # Run daily at 2 AM UTC (Bronze), 2:30 AM UTC (Silver), 3 AM UTC (Gold)
     - cron: '0 2 * * *'  # Bronze layer - Raw data ingestion
     - cron: '30 2 * * *' # Silver layer - Tabular processing  
-    - cron: '0 3 * * *'  # Gold layer - Analytics aggregation
+    # - cron: '0 3 * * *'  # Gold layer - Analytics aggregation (disabled for now)
 
 env:
   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -79,44 +79,44 @@ jobs:
           fi
 
   # ============================================================================
-  # JOB 3: GOLD LAYER - Analytics Aggregation
+  # JOB 3: GOLD LAYER - Analytics Aggregation (disabled for now)
   # ============================================================================
-  gold-aggregation:
-    runs-on: ubuntu-latest
-    needs: silver-processing
-    if: always() && needs.silver-processing.result == 'success'
-    outputs:
-      success: ${{ steps.gold-result.outputs.success }}
-    steps:
-      - name: 🥇 Gold Layer - Analytics Aggregation
-        id: gold-result
-        run: |
-          echo "🥇 Starting Gold layer processing..."
-          
-          # Call the new process_tabular_data function for Gold only
-          RESPONSE=$(curl -X POST \
-            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
-            -H "Content-Type: application/json" \
-            -d '{"mode": "gold_only"}' \
-            "$SUPABASE_URL/functions/v1/process_tabular_data")
-          
-          echo "Gold layer response: $RESPONSE"
-          
-          # Check if successful
-          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
-            echo "✅ Gold layer completed successfully"
-            echo "success=true" >> $GITHUB_OUTPUT
-          else
-            echo "❌ Gold layer failed"
-            echo "success=false" >> $GITHUB_OUTPUT
-            exit 1
-          fi
+  # gold-aggregation:
+  #   runs-on: ubuntu-latest
+  #   needs: silver-processing
+  #   if: always() && needs.silver-processing.result == 'success'
+  #   outputs:
+  #     success: ${{ steps.gold-result.outputs.success }}
+  #   steps:
+  #     - name: 🥇 Gold Layer - Analytics Aggregation
+  #       id: gold-result
+  #       run: |
+  #         echo "🥇 Starting Gold layer processing..."
+  #         
+  #         # Call the new process_tabular_data function for Gold only
+  #         RESPONSE=$(curl -X POST \
+  #           -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  #           -H "Content-Type: application/json" \
+  #           -d '{"mode": "gold_only"}' \
+  #           "$SUPABASE_URL/functions/v1/process_tabular_data")
+  #         
+  #         echo "Gold layer response: $RESPONSE"
+  #         
+  #         # Check if successful
+  #         if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
+  #           echo "✅ Gold layer completed successfully"
+  #           echo "success=true" >> $GITHUB_OUTPUT
+  #         else
+  #           echo "❌ Gold layer failed"
+  #           echo "success=false" >> $GITHUB_OUTPUT
+  #           exit 1
+  #         fi
 
   # JOB 5: MONITORING & ALERTS
   # ============================================================================
   monitoring:
     runs-on: ubuntu-latest
-    needs: [bronze-ingestion, silver-processing, gold-aggregation]
+    needs: [bronze-ingestion, silver-processing]
     if: always()
     steps:
       - name: 📊 Pipeline Monitoring
@@ -124,7 +124,7 @@ jobs:
           echo "📊 Pipeline Status Summary:"
           echo "Bronze Layer: ${{ needs.bronze-ingestion.result }}"
           echo "Silver Layer: ${{ needs.silver-processing.result }}"
-          echo "Gold Layer: ${{ needs.gold-aggregation.result }}"
+          # echo "Gold Layer: ${{ needs.gold-aggregation.result }}"  # disabled
           
           # Check if any layer failed
           if [[ "${{ needs.bronze-ingestion.result }}" == "failure" || 
