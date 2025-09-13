@@ -1,0 +1,146 @@
+name: Silver Layer Processing
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC (after Bronze layer ingestion)
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      table_name:
+        description: 'Specific table to process (leave empty for all)'
+        required: false
+        default: ''
+        type: string
+      force_reprocess:
+        description: 'Force reprocess all data'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+jobs:
+  silver-processing:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Process Silver Layer
+      env:
+        TABLE_NAME: ${{ inputs.table_name }}
+        FORCE_REPROCESS: ${{ inputs.force_reprocess }}
+      run: |
+        echo "🥈 Starting Silver Layer Processing"
+        echo "=================================="
+        echo "📅 Scheduled run: $(date)"
+        echo "🎯 Target table: ${TABLE_NAME:-'all'}"
+        echo "🔄 Force reprocess: ${FORCE_REPROCESS}"
+        
+        # Call the Silver processing Edge Function
+        if [ -n "$TABLE_NAME" ]; then
+          echo "🎯 Processing specific table: $TABLE_NAME"
+          curl -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"table_name\": \"$TABLE_NAME\", \"force_reprocess\": $FORCE_REPROCESS}" \
+            "$SUPABASE_URL/functions/v1/process_tabular_data"
+        else
+          echo "🎯 Processing all Silver layer tables"
+          curl -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"mode\": \"silver_only\", \"force_reprocess\": $FORCE_REPROCESS}" \
+            "$SUPABASE_URL/functions/v1/process_tabular_data"
+        fi
+        
+        echo "✅ Silver layer processing completed!"
+        
+    - name: Verify Processing Results
+      run: |
+        echo "🔍 Verifying Silver layer processing results..."
+        
+        # Check Silver layer table counts
+        node -e "
+        const { createClient } = require('@supabase/supabase-js');
+        const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+          auth: { autoRefreshToken: false, persistSession: false }
+        });
+        
+        async function verifySilverLayer() {
+          const tables = ['songs', 'shows', 'setlists', 'venues', 'latest', 'metadata', 'links', 'uploads', 'appearances', 'jamcharts'];
+          
+          console.log('📊 Silver Layer Table Counts:');
+          for (const table of tables) {
+            try {
+              const { data, error } = await supabase
+                .from(\`silver_\${table}\`)
+                .select('*', { count: 'exact' });
+              
+              if (error) {
+                console.log(\`❌ \${table}: Error - \${error.message}\`);
+              } else {
+                console.log(\`✅ \${table}: \${data.length} records\`);
+              }
+            } catch (err) {
+              console.log(\`❌ \${table}: Exception - \${err.message}\`);
+            }
+          }
+        }
+        
+        verifySilverLayer().catch(console.error);
+        "
+        
+    - name: Check Processing Status
+      run: |
+        echo "📊 Checking processing status..."
+        
+        node -e "
+        const { createClient } = require('@supabase/supabase-js');
+        const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+          auth: { autoRefreshToken: false, persistSession: false }
+        });
+        
+        async function checkProcessingStatus() {
+          try {
+            const { data, error } = await supabase
+              .from('processing_status')
+              .select('*')
+              .order('completed_at', { ascending: false })
+              .limit(10);
+            
+            if (error) {
+              console.log('❌ Error checking processing status:', error.message);
+            } else {
+              console.log('📊 Recent processing status:');
+              data.forEach(status => {
+                console.log(\`  - \${status.table_name} (\${status.layer}): \${status.status} - \${status.records_processed} records at \${status.completed_at}\`);
+              });
+            }
+          } catch (err) {
+            console.log('❌ Exception checking processing status:', err.message);
+          }
+        }
+        
+        checkProcessingStatus().catch(console.error);
+        "
+        
+    - name: Notify on Failure
+      if: failure()
+      run: |
+        echo "❌ Silver layer processing failed!"
+        echo "Please check the logs and retry if necessary."
+        # Add notification logic here (Slack, email, etc.)
+
