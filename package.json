@@ -9,7 +9,11 @@
     "db:push": "npx supabase db push",
     "functions:deploy": "npx supabase functions deploy",
     "functions:serve": "npx supabase functions serve",
-    "test": "node tests/verify_complete_system.js"
+    "test": "node tests/verify_complete_system.js",
+    "test:songs": "node tests/test_songs_silver_pipeline.js",
+    "repopulate": "node tests/repopulate_raw_data.js",
+    "test:ingest": "node tests/test_ingest_function.js",
+    "populate:setlists": "node tests/populate_setlists_complete.js"
   },
   "keywords": ["rag", "chatbot", "music", "supabase", "openai", "elgoose"],
   "author": "",

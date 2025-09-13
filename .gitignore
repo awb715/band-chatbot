@@ -6,3 +6,11 @@ build/
 .supabase/
 .vscode/
 .DS_Store
+.cursor/
+
+# Generated CSV files
+*.csv
+combined_fields.csv
+complete_fields.csv
+raw_keys_sampled.csv
+silver_columns.csv

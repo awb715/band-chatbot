@@ -20,7 +20,8 @@ serve(async (req) => {
 
     const { mode = 'incremental', table_name, force_reprocess = false } = await req.json()
 
-    console.log(`🔄 Starting tabular data processing in ${mode} mode...`)
+    const pstTimestamp = new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })
+    console.log(`🔄 Starting tabular data processing in ${mode} mode... [PST ${pstTimestamp}]`)
     if (table_name) {
       console.log(`🎯 Target table: ${table_name}`)
     }
@@ -41,15 +42,15 @@ serve(async (req) => {
       console.log('🎵 Processing songs table only...')
       
       // For now, just verify we can access both layers
-      const { data: bronzeData, error: bronzeError } = await supabase
-        .from('raw_data.songs')
-        .select('count', { count: 'exact' })
-        .limit(1)
+      const { error: bronzeError } = await supabase
+        .schema('raw_data')
+        .from('songs')
+        .select('id', { count: 'exact', head: true })
       
-      const { data: silverData, error: silverCountError } = await supabase
-        .from('silver.songs')
-        .select('count', { count: 'exact' })
-        .limit(1)
+      const { error: silverCountError } = await supabase
+        .schema('silver')
+        .from('songs')
+        .select('id', { count: 'exact', head: true })
       
       if (bronzeError || silverCountError) {
         silverError = bronzeError || silverCountError
@@ -67,13 +68,17 @@ serve(async (req) => {
       console.log('🥈 Processing all Silver layer tables...')
       
       if (force_reprocess) {
-        console.log('🔄 Force reprocessing - resetting is_processed flags...')
-        // Reset is_processed flags for all Bronze tables
+        console.log('🔄 Force reprocessing - resetting is_processed flags (all tables via schema client)...')
         const bronzeTables = ['songs', 'shows', 'setlists', 'venues', 'latest', 'metadata', 'links', 'uploads', 'appearances', 'jamcharts']
         for (const table of bronzeTables) {
-          await supabase
-            .from(`raw_data.${table}`)
+          const { error: resetErr } = await supabase
+            .schema('raw_data')
+            .from(table)
             .update({ is_processed: false })
+            .eq('is_processed', true)
+          if (resetErr) {
+            console.log(`⚠️ Reset failed for raw_data.${table}: ${resetErr.message}`)
+          }
         }
       }
       
@@ -105,26 +110,36 @@ serve(async (req) => {
 
       if (force_reprocess) {
         console.log('🔄 Force reprocessing - resetting is_processed flags...')
-        // Diagnostics before reset
-        const { count: beforeTotal } = await supabase
-          .from(`raw_data.${table_name}`)
-          .select('*', { count: 'exact', head: true })
-        const { count: beforeUnprocessed } = await supabase
-          .from(`raw_data.${table_name}`)
-          .select('*', { count: 'exact', head: true })
+        // Diagnostics before reset via schema client
+        const beforeAll = await supabase
+          .schema('raw_data')
+          .from(table_name)
+          .select('id', { count: 'exact', head: true })
+        const beforeUnproc = await supabase
+          .schema('raw_data')
+          .from(table_name)
+          .select('id', { count: 'exact', head: true })
           .eq('is_processed', false)
-        diag_before_total = beforeTotal ?? null
-        diag_before_unprocessed = beforeUnprocessed ?? null
-        console.log(`📊 raw_data.${table_name} before reset: total=${beforeTotal} unprocessed=${beforeUnprocessed}`)
+        diag_before_total = beforeAll.count ?? null
+        diag_before_unprocessed = beforeUnproc.count ?? null
+        console.log(`📊 raw_data.${table_name} before reset: total=${diag_before_total} unprocessed=${diag_before_unprocessed}`)
 
-        await supabase.from(`raw_data.${table_name}`).update({ is_processed: false })
+        const reset = await supabase
+          .schema('raw_data')
+          .from(table_name)
+          .update({ is_processed: false })
+          .eq('is_processed', true)
+        if (reset.error) {
+          console.log(`⚠️ Reset failed for raw_data.${table_name}: ${reset.error.message}`)
+        }
 
-        const { count: afterUnprocessed } = await supabase
-          .from(`raw_data.${table_name}`)
-          .select('*', { count: 'exact', head: true })
+        const afterUnproc = await supabase
+          .schema('raw_data')
+          .from(table_name)
+          .select('id', { count: 'exact', head: true })
           .eq('is_processed', false)
-        diag_after_unprocessed = afterUnprocessed ?? null
-        console.log(`📊 raw_data.${table_name} after reset: unprocessed=${afterUnprocessed}`)
+        diag_after_unprocessed = afterUnproc.count ?? null
+        console.log(`📊 raw_data.${table_name} after reset: unprocessed=${diag_after_unprocessed}`)
       }
       
       // Call specific table function in silver schema via PostgREST
@@ -145,11 +160,12 @@ serve(async (req) => {
       silverResults = await rpcResp.json()
 
       // Diagnostics after ETL
-      const { count: silverCount } = await supabase
-        .from(`silver.${table_name}`)
-        .select('*', { count: 'exact', head: true })
-      diag_silver_after = silverCount ?? null
-      console.log(`📊 silver.${table_name} count after ETL: ${silverCount}`)
+      const silverCountRes = await supabase
+        .schema('silver')
+        .from(table_name)
+        .select('id', { count: 'exact', head: true })
+      diag_silver_after = silverCountRes.count ?? null
+      console.log(`📊 silver.${table_name} count after ETL: ${diag_silver_after}`)
 
       // Attach diagnostics to results
       if (Array.isArray(silverResults)) {

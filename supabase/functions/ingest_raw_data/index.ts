@@ -339,7 +339,7 @@ async function processRecord(
   // STEP 2: Check if this record already exists in our database
   // We use the external_id to identify existing records
   const { data: existingRecord } = await supabaseClient
-    .from(`raw_data_${tableName}`)
+    .from(`raw_data.${tableName}`)
     .select('id, data, version')
     .eq('external_id', externalId)
     .single()
@@ -351,7 +351,7 @@ async function processRecord(
     if (dataChanged) {
       // Data has changed - update the existing record
       await supabaseClient
-        .from(`raw_data_${tableName}`)
+        .from(`raw_data.${tableName}`)
         .update({
           data: record,                    // Update with new data
           version: existingRecord.version + 1,  // Increment version number
@@ -367,7 +367,7 @@ async function processRecord(
   } else {
     // STEP 3B: Record doesn't exist - insert as new record
     await supabaseClient
-      .from(`raw_data_${tableName}`)
+      .from(`raw_data.${tableName}`)
       .insert({
         external_id: externalId,    // Store the original ID from ElGoose
         data: record,               // Store the complete JSON record
