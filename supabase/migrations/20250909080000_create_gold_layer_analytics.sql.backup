@@ -1,0 +1,557 @@
+-- Create Gold Layer for Analytics and Chatbot Queries
+-- This migration creates analytics-ready tables and chatbot query functions
+
+-- ============================================================================
+-- CREATE GOLD SCHEMA
+-- ============================================================================
+
+CREATE SCHEMA IF NOT EXISTS gold;
+COMMENT ON SCHEMA gold IS 'Gold layer: Analytics and ML-ready data optimized for queries';
+
+-- ============================================================================
+-- CREATE GOLD ANALYTICS TABLES
+-- ============================================================================
+
+-- 1. Songs Analytics Table
+CREATE TABLE gold.songs_analytics (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  song_name TEXT NOT NULL,
+  slug TEXT NOT NULL,
+  is_original BOOLEAN NOT NULL,
+  original_artist TEXT,
+  total_performances INTEGER DEFAULT 0,
+  first_performance_date DATE,
+  last_performance_date DATE,
+  performance_frequency FLOAT,
+  unique_venues INTEGER DEFAULT 0,
+  unique_cities INTEGER DEFAULT 0,
+  unique_states INTEGER DEFAULT 0,
+  performance_years INTEGER[],
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+COMMENT ON TABLE gold.songs_analytics IS 'Analytics-ready song data with performance statistics';
+
+-- 2. Shows Analytics Table
+CREATE TABLE gold.shows_analytics (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  show_date DATE NOT NULL,
+  venue_name TEXT NOT NULL,
+  city TEXT,
+  state TEXT,
+  country TEXT,
+  total_songs INTEGER DEFAULT 0,
+  unique_songs INTEGER DEFAULT 0,
+  original_songs INTEGER DEFAULT 0,
+  cover_songs INTEGER DEFAULT 0,
+  show_duration_minutes INTEGER,
+  performance_year INTEGER,
+  performance_month INTEGER,
+  performance_day_of_week INTEGER,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+COMMENT ON TABLE gold.shows_analytics IS 'Analytics-ready show data with song statistics';
+
+-- 3. Venues Analytics Table
+CREATE TABLE gold.venues_analytics (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  venue_name TEXT NOT NULL,
+  city TEXT,
+  state TEXT,
+  country TEXT,
+  total_shows INTEGER DEFAULT 0,
+  first_show_date DATE,
+  last_show_date DATE,
+  unique_songs INTEGER DEFAULT 0,
+  performance_years INTEGER[],
+  shows_per_year FLOAT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+COMMENT ON TABLE gold.venues_analytics IS 'Analytics-ready venue data with performance statistics';
+
+-- 4. Setlists Analytics Table
+CREATE TABLE gold.setlists_analytics (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  song_name TEXT NOT NULL,
+  show_date DATE NOT NULL,
+  venue_name TEXT NOT NULL,
+  city TEXT,
+  state TEXT,
+  song_order INTEGER,
+  performance_year INTEGER,
+  performance_month INTEGER,
+  performance_day_of_week INTEGER,
+  is_original BOOLEAN,
+  original_artist TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+COMMENT ON TABLE gold.setlists_analytics IS 'Analytics-ready setlist data with enhanced metadata';
+
+-- ============================================================================
+-- CREATE INDEXES FOR PERFORMANCE
+-- ============================================================================
+
+-- Songs analytics indexes
+CREATE INDEX idx_gold_songs_name ON gold.songs_analytics(song_name);
+CREATE INDEX idx_gold_songs_performances ON gold.songs_analytics(total_performances);
+CREATE INDEX idx_gold_songs_original ON gold.songs_analytics(is_original);
+CREATE INDEX idx_gold_songs_artist ON gold.songs_analytics(original_artist);
+CREATE INDEX idx_gold_songs_first_performance ON gold.songs_analytics(first_performance_date);
+CREATE INDEX idx_gold_songs_last_performance ON gold.songs_analytics(last_performance_date);
+
+-- Shows analytics indexes
+CREATE INDEX idx_gold_shows_date ON gold.shows_analytics(show_date);
+CREATE INDEX idx_gold_shows_venue ON gold.shows_analytics(venue_name);
+CREATE INDEX idx_gold_shows_city ON gold.shows_analytics(city);
+CREATE INDEX idx_gold_shows_state ON gold.shows_analytics(state);
+CREATE INDEX idx_gold_shows_year ON gold.shows_analytics(performance_year);
+CREATE INDEX idx_gold_shows_month ON gold.shows_analytics(performance_month);
+CREATE INDEX idx_gold_shows_songs ON gold.shows_analytics(total_songs);
+
+-- Venues analytics indexes
+CREATE INDEX idx_gold_venues_name ON gold.venues_analytics(venue_name);
+CREATE INDEX idx_gold_venues_city ON gold.venues_analytics(city);
+CREATE INDEX idx_gold_venues_state ON gold.venues_analytics(state);
+CREATE INDEX idx_gold_venues_shows ON gold.venues_analytics(total_shows);
+CREATE INDEX idx_gold_venues_first_show ON gold.venues_analytics(first_show_date);
+CREATE INDEX idx_gold_venues_last_show ON gold.venues_analytics(last_show_date);
+
+-- Setlists analytics indexes
+CREATE INDEX idx_gold_setlists_song ON gold.setlists_analytics(song_name);
+CREATE INDEX idx_gold_setlists_date ON gold.setlists_analytics(show_date);
+CREATE INDEX idx_gold_setlists_venue ON gold.setlists_analytics(venue_name);
+CREATE INDEX idx_gold_setlists_order ON gold.setlists_analytics(song_order);
+CREATE INDEX idx_gold_setlists_year ON gold.setlists_analytics(performance_year);
+CREATE INDEX idx_gold_setlists_month ON gold.setlists_analytics(performance_month);
+
+-- ============================================================================
+-- CREATE AGGREGATION FUNCTIONS
+-- ============================================================================
+
+-- Function to aggregate songs analytics
+CREATE OR REPLACE FUNCTION gold.aggregate_songs_analytics()
+RETURNS INTEGER AS $$
+DECLARE
+  processed_count INTEGER := 0;
+BEGIN
+  INSERT INTO gold.songs_analytics (
+    song_name, slug, is_original, original_artist,
+    total_performances, first_performance_date, last_performance_date,
+    unique_venues, unique_cities, unique_states, performance_years
+  )
+  SELECT 
+    s.name,
+    s.slug,
+    s.is_original,
+    s.original_artist,
+    COUNT(sl.id)::INTEGER as total_performances,
+    MIN(sl.show_date) as first_performance_date,
+    MAX(sl.show_date) as last_performance_date,
+    COUNT(DISTINCT sl.venue_name)::INTEGER as unique_venues,
+    COUNT(DISTINCT sl.city)::INTEGER as unique_cities,
+    COUNT(DISTINCT sl.state)::INTEGER as unique_states,
+    ARRAY_AGG(DISTINCT EXTRACT(YEAR FROM sl.show_date)::INTEGER ORDER BY EXTRACT(YEAR FROM sl.show_date)) as performance_years
+  FROM silver.songs s
+  LEFT JOIN silver.setlists sl ON s.name = sl.song_name
+  GROUP BY s.id, s.name, s.slug, s.is_original, s.original_artist
+  ON CONFLICT (song_name) DO UPDATE SET
+    total_performances = EXCLUDED.total_performances,
+    first_performance_date = EXCLUDED.first_performance_date,
+    last_performance_date = EXCLUDED.last_performance_date,
+    unique_venues = EXCLUDED.unique_venues,
+    unique_cities = EXCLUDED.unique_cities,
+    unique_states = EXCLUDED.unique_states,
+    performance_years = EXCLUDED.performance_years,
+    updated_at = NOW();
+  
+  GET DIAGNOSTICS processed_count = ROW_COUNT;
+  RETURN processed_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to aggregate shows analytics
+CREATE OR REPLACE FUNCTION gold.aggregate_shows_analytics()
+RETURNS INTEGER AS $$
+DECLARE
+  processed_count INTEGER := 0;
+BEGIN
+  INSERT INTO gold.shows_analytics (
+    show_date, venue_name, city, state, country,
+    total_songs, unique_songs, original_songs, cover_songs,
+    performance_year, performance_month, performance_day_of_week
+  )
+  SELECT 
+    s.show_date,
+    s.venue_name,
+    s.city,
+    s.state,
+    s.country,
+    COUNT(sl.id)::INTEGER as total_songs,
+    COUNT(DISTINCT sl.song_name)::INTEGER as unique_songs,
+    COUNT(sl.id) FILTER (WHERE sng.is_original = true)::INTEGER as original_songs,
+    COUNT(sl.id) FILTER (WHERE sng.is_original = false)::INTEGER as cover_songs,
+    EXTRACT(YEAR FROM s.show_date)::INTEGER as performance_year,
+    EXTRACT(MONTH FROM s.show_date)::INTEGER as performance_month,
+    EXTRACT(DOW FROM s.show_date)::INTEGER as performance_day_of_week
+  FROM silver.shows s
+  LEFT JOIN silver.setlists sl ON s.show_date = sl.show_date AND s.venue_name = sl.venue_name
+  LEFT JOIN silver.songs sng ON sl.song_name = sng.name
+  GROUP BY s.id, s.show_date, s.venue_name, s.city, s.state, s.country
+  ON CONFLICT (show_date, venue_name) DO UPDATE SET
+    total_songs = EXCLUDED.total_songs,
+    unique_songs = EXCLUDED.unique_songs,
+    original_songs = EXCLUDED.original_songs,
+    cover_songs = EXCLUDED.cover_songs,
+    performance_year = EXCLUDED.performance_year,
+    performance_month = EXCLUDED.performance_month,
+    performance_day_of_week = EXCLUDED.performance_day_of_week,
+    updated_at = NOW();
+  
+  GET DIAGNOSTICS processed_count = ROW_COUNT;
+  RETURN processed_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to aggregate venues analytics
+CREATE OR REPLACE FUNCTION gold.aggregate_venues_analytics()
+RETURNS INTEGER AS $$
+DECLARE
+  processed_count INTEGER := 0;
+BEGIN
+  INSERT INTO gold.venues_analytics (
+    venue_name, city, state, country,
+    total_shows, first_show_date, last_show_date,
+    unique_songs, performance_years, shows_per_year
+  )
+  SELECT 
+    v.name,
+    v.city,
+    v.state,
+    v.country,
+    COUNT(DISTINCT s.id)::INTEGER as total_shows,
+    MIN(s.show_date) as first_show_date,
+    MAX(s.show_date) as last_show_date,
+    COUNT(DISTINCT sl.song_name)::INTEGER as unique_songs,
+    ARRAY_AGG(DISTINCT EXTRACT(YEAR FROM s.show_date)::INTEGER ORDER BY EXTRACT(YEAR FROM s.show_date)) as performance_years,
+    COUNT(DISTINCT s.id)::FLOAT / NULLIF(EXTRACT(YEAR FROM MAX(s.show_date)) - EXTRACT(YEAR FROM MIN(s.show_date)) + 1, 0) as shows_per_year
+  FROM silver.venues v
+  LEFT JOIN silver.shows s ON v.name = s.venue_name
+  LEFT JOIN silver.setlists sl ON s.show_date = sl.show_date AND s.venue_name = sl.venue_name
+  GROUP BY v.id, v.name, v.city, v.state, v.country
+  ON CONFLICT (venue_name) DO UPDATE SET
+    total_shows = EXCLUDED.total_shows,
+    first_show_date = EXCLUDED.first_show_date,
+    last_show_date = EXCLUDED.last_show_date,
+    unique_songs = EXCLUDED.unique_songs,
+    performance_years = EXCLUDED.performance_years,
+    shows_per_year = EXCLUDED.shows_per_year,
+    updated_at = NOW();
+  
+  GET DIAGNOSTICS processed_count = ROW_COUNT;
+  RETURN processed_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to aggregate setlists analytics
+CREATE OR REPLACE FUNCTION gold.aggregate_setlists_analytics()
+RETURNS INTEGER AS $$
+DECLARE
+  processed_count INTEGER := 0;
+BEGIN
+  INSERT INTO gold.setlists_analytics (
+    song_name, show_date, venue_name, city, state,
+    song_order, performance_year, performance_month, performance_day_of_week,
+    is_original, original_artist
+  )
+  SELECT 
+    sl.song_name,
+    sl.show_date,
+    sl.venue_name,
+    sl.city,
+    sl.state,
+    sl.song_order,
+    EXTRACT(YEAR FROM sl.show_date)::INTEGER as performance_year,
+    EXTRACT(MONTH FROM sl.show_date)::INTEGER as performance_month,
+    EXTRACT(DOW FROM sl.show_date)::INTEGER as performance_day_of_week,
+    s.is_original,
+    s.original_artist
+  FROM silver.setlists sl
+  LEFT JOIN silver.songs s ON sl.song_name = s.name
+  ON CONFLICT (song_name, show_date, venue_name, song_order) DO UPDATE SET
+    performance_year = EXCLUDED.performance_year,
+    performance_month = EXCLUDED.performance_month,
+    performance_day_of_week = EXCLUDED.performance_day_of_week,
+    is_original = EXCLUDED.is_original,
+    original_artist = EXCLUDED.original_artist;
+  
+  GET DIAGNOSTICS processed_count = ROW_COUNT;
+  RETURN processed_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Master function to aggregate all analytics
+CREATE OR REPLACE FUNCTION gold.aggregate_all_analytics()
+RETURNS TABLE (
+  table_name TEXT,
+  processed_count INTEGER,
+  status TEXT
+) AS $$
+DECLARE
+  songs_count INTEGER;
+  shows_count INTEGER;
+  venues_count INTEGER;
+  setlists_count INTEGER;
+BEGIN
+  -- Aggregate songs analytics
+  SELECT gold.aggregate_songs_analytics() INTO songs_count;
+  RETURN QUERY SELECT 'songs_analytics', songs_count, 'completed';
+  
+  -- Aggregate shows analytics
+  SELECT gold.aggregate_shows_analytics() INTO shows_count;
+  RETURN QUERY SELECT 'shows_analytics', shows_count, 'completed';
+  
+  -- Aggregate venues analytics
+  SELECT gold.aggregate_venues_analytics() INTO venues_count;
+  RETURN QUERY SELECT 'venues_analytics', venues_count, 'completed';
+  
+  -- Aggregate setlists analytics
+  SELECT gold.aggregate_setlists_analytics() INTO setlists_count;
+  RETURN QUERY SELECT 'setlists_analytics', setlists_count, 'completed';
+  
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================================
+-- CREATE CHATBOT QUERY FUNCTIONS
+-- ============================================================================
+
+-- Function to get song information for chatbot
+CREATE OR REPLACE FUNCTION get_song_info(song_name TEXT)
+RETURNS TABLE (
+  name TEXT,
+  slug TEXT,
+  is_original BOOLEAN,
+  original_artist TEXT,
+  total_performances INTEGER,
+  first_performance DATE,
+  last_performance DATE,
+  unique_venues INTEGER,
+  performance_years INTEGER[]
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    sa.song_name,
+    sa.slug,
+    sa.is_original,
+    sa.original_artist,
+    sa.total_performances,
+    sa.first_performance_date,
+    sa.last_performance_date,
+    sa.unique_venues,
+    sa.performance_years
+  FROM gold.songs_analytics sa
+  WHERE LOWER(sa.song_name) LIKE LOWER('%' || song_name || '%')
+  ORDER BY sa.total_performances DESC;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to get show information for chatbot
+CREATE OR REPLACE FUNCTION get_show_info(show_date DATE)
+RETURNS TABLE (
+  show_date DATE,
+  venue_name TEXT,
+  city TEXT,
+  state TEXT,
+  total_songs INTEGER,
+  unique_songs INTEGER,
+  original_songs INTEGER,
+  cover_songs INTEGER,
+  song_list TEXT[]
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    sa.show_date,
+    sa.venue_name,
+    sa.city,
+    sa.state,
+    sa.total_songs,
+    sa.unique_songs,
+    sa.original_songs,
+    sa.cover_songs,
+    ARRAY_AGG(sla.song_name ORDER BY sla.song_order) as song_list
+  FROM gold.shows_analytics sa
+  LEFT JOIN gold.setlists_analytics sla ON sa.show_date = sla.show_date AND sa.venue_name = sla.venue_name
+  WHERE sa.show_date = show_date
+  GROUP BY sa.show_date, sa.venue_name, sa.city, sa.state, sa.total_songs, sa.unique_songs, sa.original_songs, sa.cover_songs;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to get venue information for chatbot
+CREATE OR REPLACE FUNCTION get_venue_info(venue_name TEXT)
+RETURNS TABLE (
+  venue_name TEXT,
+  city TEXT,
+  state TEXT,
+  total_shows INTEGER,
+  first_show DATE,
+  last_show DATE,
+  unique_songs INTEGER,
+  performance_years INTEGER[],
+  shows_per_year FLOAT
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    va.venue_name,
+    va.city,
+    va.state,
+    va.total_shows,
+    va.first_show_date,
+    va.last_show_date,
+    va.unique_songs,
+    va.performance_years,
+    va.shows_per_year
+  FROM gold.venues_analytics va
+  WHERE LOWER(va.venue_name) LIKE LOWER('%' || venue_name || '%')
+  ORDER BY va.total_shows DESC;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to get most played songs
+CREATE OR REPLACE FUNCTION get_most_played_songs(limit_count INTEGER DEFAULT 10)
+RETURNS TABLE (
+  song_name TEXT,
+  total_performances INTEGER,
+  first_performance DATE,
+  last_performance DATE,
+  unique_venues INTEGER
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    sa.song_name,
+    sa.total_performances,
+    sa.first_performance_date,
+    sa.last_performance_date,
+    sa.unique_venues
+  FROM gold.songs_analytics sa
+  ORDER BY sa.total_performances DESC
+  LIMIT limit_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to get shows by year
+CREATE OR REPLACE FUNCTION get_shows_by_year(year_filter INTEGER)
+RETURNS TABLE (
+  show_date DATE,
+  venue_name TEXT,
+  city TEXT,
+  state TEXT,
+  total_songs INTEGER,
+  unique_songs INTEGER
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    sa.show_date,
+    sa.venue_name,
+    sa.city,
+    sa.state,
+    sa.total_songs,
+    sa.unique_songs
+  FROM gold.shows_analytics sa
+  WHERE sa.performance_year = year_filter
+  ORDER BY sa.show_date DESC;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to get songs by venue
+CREATE OR REPLACE FUNCTION get_songs_by_venue(venue_name TEXT)
+RETURNS TABLE (
+  song_name TEXT,
+  show_date DATE,
+  song_order INTEGER,
+  is_original BOOLEAN,
+  original_artist TEXT
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    sla.song_name,
+    sla.show_date,
+    sla.song_order,
+    sla.is_original,
+    sla.original_artist
+  FROM gold.setlists_analytics sla
+  WHERE LOWER(sla.venue_name) LIKE LOWER('%' || venue_name || '%')
+  ORDER BY sla.show_date DESC, sla.song_order;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================================
+-- GRANT PERMISSIONS
+-- ============================================================================
+
+-- Grant usage on gold schema
+GRANT USAGE ON SCHEMA gold TO data_processor, chatbot_user, analytics_user;
+
+-- Grant permissions to data_processor role
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA gold TO data_processor;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA gold TO data_processor;
+
+-- Grant permissions to chatbot_user role
+GRANT SELECT ON ALL TABLES IN SCHEMA gold TO chatbot_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA gold TO chatbot_user;
+
+-- Grant permissions to analytics_user role
+GRANT SELECT ON ALL TABLES IN SCHEMA gold TO analytics_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA gold TO analytics_user;
+
+-- ============================================================================
+-- CREATE MONITORING VIEWS
+-- ============================================================================
+
+-- View for monitoring gold layer analytics
+CREATE OR REPLACE VIEW gold_analytics_status AS
+SELECT 
+  'gold' as layer,
+  table_name,
+  COUNT(*) as total_records,
+  MAX(updated_at) as latest_update
+FROM (
+  SELECT 'songs_analytics' as table_name, updated_at FROM gold.songs_analytics
+  UNION ALL
+  SELECT 'shows_analytics' as table_name, updated_at FROM gold.shows_analytics
+  UNION ALL
+  SELECT 'venues_analytics' as table_name, updated_at FROM gold.venues_analytics
+  UNION ALL
+  SELECT 'setlists_analytics' as table_name, created_at as updated_at FROM gold.setlists_analytics
+) t
+GROUP BY table_name;
+
+-- Grant access to monitoring views
+GRANT SELECT ON gold_analytics_status TO data_processor, chatbot_user, analytics_user;
+
+-- ============================================================================
+-- COMMENTS AND DOCUMENTATION
+-- ============================================================================
+
+COMMENT ON SCHEMA gold IS 'Gold layer: Analytics and ML-ready data optimized for queries';
+COMMENT ON FUNCTION gold.aggregate_songs_analytics() IS 'Aggregate song performance statistics';
+COMMENT ON FUNCTION gold.aggregate_shows_analytics() IS 'Aggregate show statistics';
+COMMENT ON FUNCTION gold.aggregate_venues_analytics() IS 'Aggregate venue performance statistics';
+COMMENT ON FUNCTION gold.aggregate_setlists_analytics() IS 'Aggregate setlist analytics with enhanced metadata';
+COMMENT ON FUNCTION get_song_info(TEXT) IS 'Get comprehensive song information for chatbot';
+COMMENT ON FUNCTION get_show_info(DATE) IS 'Get comprehensive show information for chatbot';
+COMMENT ON FUNCTION get_venue_info(TEXT) IS 'Get comprehensive venue information for chatbot';
+COMMENT ON FUNCTION get_most_played_songs(INTEGER) IS 'Get most played songs with statistics';
+COMMENT ON FUNCTION get_shows_by_year(INTEGER) IS 'Get shows filtered by year';
+COMMENT ON FUNCTION get_songs_by_venue(TEXT) IS 'Get songs performed at specific venue';

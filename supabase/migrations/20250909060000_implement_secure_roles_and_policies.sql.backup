@@ -1,0 +1,320 @@
+-- Implement secure user roles and RLS policies for bronze/silver/gold architecture
+-- This migration creates proper role-based access control for the data pipeline
+
+-- ============================================================================
+-- CREATE USER ROLES
+-- ============================================================================
+
+-- 1. Data Ingestion Role (for Edge Functions)
+DO $$ BEGIN
+    CREATE ROLE data_ingestion;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;;
+COMMENT ON ROLE data_ingestion IS 'Role for automated data ingestion from APIs';
+
+-- 2. Data Processing Role (for ETL processes)
+DO $$ BEGIN
+    CREATE ROLE data_processor;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+COMMENT ON ROLE data_processor IS 'Role for ETL processes between data layers';
+
+-- 3. Chatbot Role (for chatbot application)
+DO $$ BEGIN
+    CREATE ROLE chatbot_user;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+COMMENT ON ROLE chatbot_user IS 'Role for chatbot application access';
+
+-- 4. Analytics Role (for analytics and reporting)
+DO $$ BEGIN
+    CREATE ROLE analytics_user;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+COMMENT ON ROLE analytics_user IS 'Role for analytics and reporting access';
+
+-- ============================================================================
+-- GRANT PERMISSIONS TO ROLES
+-- ============================================================================
+
+-- Data Ingestion Role Permissions
+-- Can write to Bronze layer (raw_data)
+GRANT USAGE ON SCHEMA raw_data TO data_ingestion;
+GRANT INSERT, UPDATE ON ALL TABLES IN SCHEMA raw_data TO data_ingestion;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA raw_data TO data_ingestion;
+
+-- Can read from Bronze layer for processing
+GRANT SELECT ON ALL TABLES IN SCHEMA raw_data TO data_ingestion;
+
+-- Data Processor Role Permissions
+-- Can read from Bronze layer
+GRANT USAGE ON SCHEMA raw_data TO data_processor;
+GRANT SELECT ON ALL TABLES IN SCHEMA raw_data TO data_processor;
+
+-- Can write to Silver and Gold layers (when created)
+-- These will be granted when schemas are created
+
+-- Chatbot Role Permissions
+-- Can read from Gold layer and documents table
+GRANT SELECT ON documents TO chatbot_user;
+GRANT EXECUTE ON FUNCTION match_documents TO chatbot_user;
+
+-- Analytics Role Permissions
+-- Can read from Silver and Gold layers (when created)
+-- Can read from documents table
+GRANT SELECT ON documents TO analytics_user;
+GRANT EXECUTE ON FUNCTION match_documents TO analytics_user;
+
+-- ============================================================================
+-- REMOVE OVERLY PERMISSIVE POLICIES
+-- ============================================================================
+
+-- Drop current overly permissive policies
+DROP POLICY IF EXISTS "Allow all operations on raw_data tables" ON raw_data.setlists;
+DROP POLICY IF EXISTS "Allow all operations on raw_data tables" ON raw_data.shows;
+DROP POLICY IF EXISTS "Allow all operations on raw_data tables" ON raw_data.songs;
+DROP POLICY IF EXISTS "Allow all operations on raw_data tables" ON raw_data.venues;
+DROP POLICY IF EXISTS "Allow all operations on raw_data tables" ON raw_data.jamcharts;
+DROP POLICY IF EXISTS "Allow all operations on raw_data tables" ON raw_data.latest;
+DROP POLICY IF EXISTS "Allow all operations on raw_data tables" ON raw_data.metadata;
+DROP POLICY IF EXISTS "Allow all operations on raw_data tables" ON raw_data.links;
+DROP POLICY IF EXISTS "Allow all operations on raw_data tables" ON raw_data.uploads;
+DROP POLICY IF EXISTS "Allow all operations on raw_data tables" ON raw_data.appearances;
+
+-- ============================================================================
+-- CREATE SECURE RLS POLICIES
+-- ============================================================================
+
+-- Bronze Layer (raw_data) Policies
+-- Only data_ingestion role can write, others can read for processing
+
+-- Setlists policies
+CREATE POLICY "data_ingestion_setlists_write" ON raw_data.setlists
+  FOR INSERT TO data_ingestion WITH CHECK (true);
+
+CREATE POLICY "data_ingestion_setlists_update" ON raw_data.setlists 
+  FOR UPDATE TO data_ingestion USING (true) WITH CHECK (true);
+
+CREATE POLICY "data_processor_setlists_read" ON raw_data.setlists 
+  FOR SELECT TO data_processor USING (true);
+
+-- Songs policies
+CREATE POLICY "data_ingestion_songs_write" ON raw_data.songs 
+  FOR INSERT TO data_ingestion USING (true);
+
+CREATE POLICY "data_ingestion_songs_update" ON raw_data.songs 
+  FOR UPDATE TO data_ingestion USING (true);
+
+CREATE POLICY "data_processor_songs_read" ON raw_data.songs 
+  FOR SELECT TO data_processor USING (true);
+
+-- Shows policies
+CREATE POLICY "data_ingestion_shows_write" ON raw_data.shows 
+  FOR INSERT TO data_ingestion USING (true);
+
+CREATE POLICY "data_ingestion_shows_update" ON raw_data.shows 
+  FOR UPDATE TO data_ingestion USING (true);
+
+CREATE POLICY "data_processor_shows_read" ON raw_data.shows 
+  FOR SELECT TO data_processor USING (true);
+
+-- Venues policies
+CREATE POLICY "data_ingestion_venues_write" ON raw_data.venues 
+  FOR INSERT TO data_ingestion USING (true);
+
+CREATE POLICY "data_ingestion_venues_update" ON raw_data.venues 
+  FOR UPDATE TO data_ingestion USING (true);
+
+CREATE POLICY "data_processor_venues_read" ON raw_data.venues 
+  FOR SELECT TO data_processor USING (true);
+
+-- Apply same pattern to other tables
+CREATE POLICY "data_ingestion_jamcharts_write" ON raw_data.jamcharts 
+  FOR INSERT TO data_ingestion USING (true);
+CREATE POLICY "data_ingestion_jamcharts_update" ON raw_data.jamcharts 
+  FOR UPDATE TO data_ingestion USING (true);
+CREATE POLICY "data_processor_jamcharts_read" ON raw_data.jamcharts 
+  FOR SELECT TO data_processor USING (true);
+
+CREATE POLICY "data_ingestion_latest_write" ON raw_data.latest 
+  FOR INSERT TO data_ingestion USING (true);
+CREATE POLICY "data_ingestion_latest_update" ON raw_data.latest 
+  FOR UPDATE TO data_ingestion USING (true);
+CREATE POLICY "data_processor_latest_read" ON raw_data.latest 
+  FOR SELECT TO data_processor USING (true);
+
+CREATE POLICY "data_ingestion_metadata_write" ON raw_data.metadata 
+  FOR INSERT TO data_ingestion USING (true);
+CREATE POLICY "data_ingestion_metadata_update" ON raw_data.metadata 
+  FOR UPDATE TO data_ingestion USING (true);
+CREATE POLICY "data_processor_metadata_read" ON raw_data.metadata 
+  FOR SELECT TO data_processor USING (true);
+
+CREATE POLICY "data_ingestion_links_write" ON raw_data.links 
+  FOR INSERT TO data_ingestion USING (true);
+CREATE POLICY "data_ingestion_links_update" ON raw_data.links 
+  FOR UPDATE TO data_ingestion USING (true);
+CREATE POLICY "data_processor_links_read" ON raw_data.links 
+  FOR SELECT TO data_processor USING (true);
+
+CREATE POLICY "data_ingestion_uploads_write" ON raw_data.uploads 
+  FOR INSERT TO data_ingestion USING (true);
+CREATE POLICY "data_ingestion_uploads_update" ON raw_data.uploads 
+  FOR UPDATE TO data_ingestion USING (true);
+CREATE POLICY "data_processor_uploads_read" ON raw_data.uploads 
+  FOR SELECT TO data_processor USING (true);
+
+CREATE POLICY "data_ingestion_appearances_write" ON raw_data.appearances 
+  FOR INSERT TO data_ingestion USING (true);
+CREATE POLICY "data_ingestion_appearances_update" ON raw_data.appearances 
+  FOR UPDATE TO data_ingestion USING (true);
+CREATE POLICY "data_processor_appearances_read" ON raw_data.appearances 
+  FOR SELECT TO data_processor USING (true);
+
+-- Documents table policies
+CREATE POLICY "data_processor_documents_write" ON documents 
+  FOR ALL TO data_processor USING (true);
+
+CREATE POLICY "chatbot_documents_read" ON documents 
+  FOR SELECT TO chatbot_user USING (true);
+
+CREATE POLICY "analytics_documents_read" ON documents 
+  FOR SELECT TO analytics_user USING (true);
+
+-- ============================================================================
+-- CREATE HELPER FUNCTIONS
+-- ============================================================================
+
+-- Function to check if user has data_ingestion role
+CREATE OR REPLACE FUNCTION is_data_ingestion()
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN current_setting('role') = 'data_ingestion';
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Function to check if user has data_processor role
+CREATE OR REPLACE FUNCTION is_data_processor()
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN current_setting('role') = 'data_processor';
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Function to check if user has chatbot_user role
+CREATE OR REPLACE FUNCTION is_chatbot_user()
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN current_setting('role') = 'chatbot_user';
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Function to check if user has analytics_user role
+CREATE OR REPLACE FUNCTION is_analytics_user()
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN current_setting('role') = 'analytics_user';
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================================================
+-- CREATE AUDIT LOGGING
+-- ============================================================================
+
+-- Create audit log table
+CREATE TABLE IF NOT EXISTS audit_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  table_name TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  user_role TEXT NOT NULL,
+  record_id TEXT,
+  old_values JSONB,
+  new_values JSONB,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Grant permissions for audit logging
+GRANT INSERT ON audit_log TO data_ingestion, data_processor;
+
+-- Create audit trigger function
+CREATE OR REPLACE FUNCTION audit_trigger_function()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO audit_log (
+    table_name,
+    operation,
+    user_role,
+    record_id,
+    old_values,
+    new_values
+  ) VALUES (
+    TG_TABLE_NAME,
+    TG_OP,
+    current_setting('role'),
+    COALESCE(NEW.id::text, OLD.id::text),
+    CASE WHEN TG_OP = 'DELETE' THEN to_jsonb(OLD) ELSE NULL END,
+    CASE WHEN TG_OP = 'INSERT' OR TG_OP = 'UPDATE' THEN to_jsonb(NEW) ELSE NULL END
+  );
+  
+  RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+
+-- Apply audit triggers to critical tables
+CREATE TRIGGER audit_raw_data_songs
+  AFTER INSERT OR UPDATE OR DELETE ON raw_data.songs
+  FOR EACH ROW EXECUTE FUNCTION audit_trigger_function();
+
+CREATE TRIGGER audit_raw_data_setlists
+  AFTER INSERT OR UPDATE OR DELETE ON raw_data.setlists
+  FOR EACH ROW EXECUTE FUNCTION audit_trigger_function();
+
+CREATE TRIGGER audit_documents
+  AFTER INSERT OR UPDATE OR DELETE ON documents
+  FOR EACH ROW EXECUTE FUNCTION audit_trigger_function();
+
+-- ============================================================================
+-- CREATE MONITORING VIEWS
+-- ============================================================================
+
+-- View for monitoring data ingestion
+CREATE OR REPLACE VIEW data_ingestion_status AS
+SELECT 
+  'raw_data' as layer,
+  table_name,
+  COUNT(*) as total_records,
+  COUNT(*) FILTER (WHERE is_processed = true) as processed_records,
+  COUNT(*) FILTER (WHERE is_processed = false) as unprocessed_records,
+  MAX(created_at) as latest_record,
+  MAX(updated_at) as latest_update
+FROM (
+  SELECT 'songs' as table_name, is_processed, created_at, updated_at FROM raw_data.songs
+  UNION ALL
+  SELECT 'setlists' as table_name, is_processed, created_at, updated_at FROM raw_data.setlists
+  UNION ALL
+  SELECT 'shows' as table_name, is_processed, created_at, updated_at FROM raw_data.shows
+  UNION ALL
+  SELECT 'venues' as table_name, is_processed, created_at, updated_at FROM raw_data.venues
+) t
+GROUP BY table_name;
+
+-- Grant access to monitoring views
+GRANT SELECT ON data_ingestion_status TO data_ingestion, data_processor, analytics_user;
+
+-- ============================================================================
+-- COMMENTS AND DOCUMENTATION
+-- ============================================================================
+
+COMMENT ON SCHEMA raw_data IS 'Bronze layer: Raw, unprocessed data from APIs';
+COMMENT ON TABLE documents IS 'Gold layer: Vector embeddings for RAG system';
+COMMENT ON TABLE audit_log IS 'Audit trail for all data operations';
+
+-- Add comments to roles
+COMMENT ON ROLE data_ingestion IS 'Automated data ingestion from ElGoose APIs';
+COMMENT ON ROLE data_processor IS 'ETL processes between data layers';
+COMMENT ON ROLE chatbot_user IS 'Chatbot application access to processed data';
+COMMENT ON ROLE analytics_user IS 'Analytics and reporting access to processed data';
