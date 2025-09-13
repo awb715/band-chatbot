@@ -1,0 +1,57 @@
+name: 🥉 Bronze Ad-hoc Ingestion
+
+on:
+  workflow_dispatch:
+    inputs:
+      endpoint:
+        description: 'Endpoint to process'
+        required: true
+        type: choice
+        options:
+          - setlists
+          - songs
+          - shows
+          - venues
+          - latest
+          - metadata
+          - links
+          - uploads
+          - appearances
+          - jamcharts
+      mode:
+        description: 'Processing mode'
+        required: true
+        default: 'incremental'
+        type: choice
+        options:
+          - incremental
+          - full
+
+env:
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+jobs:
+  bronze-ad-hoc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run Bronze Ingestion
+        run: |
+          echo "🥉 Ad-hoc Bronze ingestion"
+          echo "Endpoint: ${{ github.event.inputs.endpoint }}"
+          echo "Mode: ${{ github.event.inputs.mode }}"
+
+          RESPONSE=$(curl -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"endpoint": "${{ github.event.inputs.endpoint }}", "mode": "${{ github.event.inputs.mode }}"}' \
+            "$SUPABASE_URL/functions/v1/ingest_raw_data")
+
+          echo "Response: $RESPONSE"
+
+          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
+            echo "✅ Success"
+          else
+            echo "❌ Failed"
+            exit 1
+          fi

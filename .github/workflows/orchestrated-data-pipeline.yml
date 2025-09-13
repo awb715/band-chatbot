@@ -6,54 +6,6 @@ on:
     - cron: '0 2 * * *'  # Bronze layer - Raw data ingestion
     - cron: '30 2 * * *' # Silver layer - Tabular processing  
     - cron: '0 3 * * *'  # Gold layer - Analytics aggregation
-  workflow_dispatch:
-    inputs:
-      layer:
-        description: 'Which layer to process'
-        required: true
-        default: 'all'
-        type: choice
-        options:
-          - 'all'
-          - 'bronze'
-          - 'silver'
-          - 'gold'
-      mode:
-        description: 'Processing mode'
-        required: true
-        default: 'incremental'
-        type: choice
-        options:
-          - 'incremental'
-          - 'full'
-          - 'songs_only'
-      endpoint:
-        description: 'Bronze: specific API endpoint (optional)'
-        required: false
-        default: 'all'
-        type: choice
-        options:
-          - 'all'
-          - 'setlists'
-          - 'songs'
-          - 'shows'
-          - 'venues'
-          - 'latest'
-          - 'metadata'
-          - 'links'
-          - 'uploads'
-          - 'appearances'
-          - 'jamcharts'
-      table_name:
-        description: 'Silver: specific table to process (optional)'
-        required: false
-        default: ''
-        type: string
-      force_reprocess:
-        description: 'Silver: force reprocess (reset flags)'
-        required: false
-        default: false
-        type: boolean
 
 env:
   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -65,7 +17,6 @@ jobs:
   # ============================================================================
   bronze-ingestion:
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || github.event.inputs.layer == 'all' || github.event.inputs.layer == 'bronze'
     outputs:
       success: ${{ steps.bronze-result.outputs.success }}
     steps:
@@ -75,20 +26,10 @@ jobs:
           echo "🥉 Starting Bronze layer processing..."
           
           # Call the existing ingest_raw_data function
-          MODE="${{ github.event.inputs.mode || 'incremental' }}"
-          ENDPOINT_INPUT="${{ github.event.inputs.endpoint || '' }}"
-
-          if [ -n "$ENDPOINT_INPUT" ] && [ "$ENDPOINT_INPUT" != "all" ]; then
-            echo "🎯 Filtering Bronze ingestion to endpoint: $ENDPOINT_INPUT"
-            PAYLOAD="{\"endpoint\": \"$ENDPOINT_INPUT\", \"mode\": \"$MODE\"}"
-          else
-            PAYLOAD="{\"mode\": \"$MODE\"}"
-          fi
-
           RESPONSE=$(curl -X POST \
             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H "Content-Type: application/json" \
-            -d "$PAYLOAD" \
+            -d '{"mode": "incremental"}' \
             "$SUPABASE_URL/functions/v1/ingest_raw_data")
           
           echo "Bronze layer response: $RESPONSE"
@@ -109,7 +50,7 @@ jobs:
   silver-processing:
     runs-on: ubuntu-latest
     needs: bronze-ingestion
-    if: always() && (needs.bronze-ingestion.result == 'success' || github.event.inputs.layer == 'silver')
+    if: always() && needs.bronze-ingestion.result == 'success'
     outputs:
       success: ${{ steps.silver-result.outputs.success }}
     steps:
@@ -119,21 +60,10 @@ jobs:
           echo "🥈 Starting Silver layer processing..."
           
           # Call the new process_tabular_data function for Silver only
-          TABLE_NAME="${{ github.event.inputs.table_name || '' }}"
-          FORCE="${{ github.event.inputs.force_reprocess || 'false' }}"
-
-          if [ -n "$TABLE_NAME" ]; then
-            echo "🎯 Processing specific Silver table: $TABLE_NAME (force=$FORCE)"
-            PAYLOAD="{\"table_name\": \"$TABLE_NAME\", \"force_reprocess\": $FORCE}"
-          else
-            echo "🎯 Processing all Silver tables (force=$FORCE)"
-            PAYLOAD="{\"mode\": \"silver_only\", \"force_reprocess\": $FORCE}"
-          fi
-
           RESPONSE=$(curl -X POST \
             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             -H "Content-Type: application/json" \
-            -d "$PAYLOAD" \
+            -d '{"mode": "silver_only"}' \
             "$SUPABASE_URL/functions/v1/process_tabular_data")
           
           echo "Silver layer response: $RESPONSE"
@@ -154,7 +84,7 @@ jobs:
   gold-aggregation:
     runs-on: ubuntu-latest
     needs: silver-processing
-    if: always() && (needs.silver-processing.result == 'success' || github.event.inputs.layer == 'gold')
+    if: always() && needs.silver-processing.result == 'success'
     outputs:
       success: ${{ steps.gold-result.outputs.success }}
     steps:
@@ -182,49 +112,6 @@ jobs:
             exit 1
           fi
 
-  # ============================================================================
-  # JOB 4: COMPLETE PIPELINE - All Layers
-  # ============================================================================
-  complete-pipeline:
-    runs-on: ubuntu-latest
-    if: github.event.inputs.layer == 'all' || (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *')
-    steps:
-      - name: 🎛️ Complete Pipeline - All Layers
-        run: |
-          echo "🎛️ Starting complete data pipeline..."
-          
-          # Determine mode based on input
-          MODE="${{ github.event.inputs.mode || 'incremental' }}"
-          echo "🎯 Processing mode: $MODE"
-          
-          # Call the process_tabular_data function
-          RESPONSE=$(curl -X POST \
-            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{\"mode\": \"$MODE\"}" \
-            "$SUPABASE_URL/functions/v1/process_tabular_data")
-          
-          echo "Pipeline response: $RESPONSE"
-          
-          # Check if successful
-          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
-            echo "✅ Pipeline completed successfully"
-            
-            # Extract and display summary
-            echo "📊 Pipeline Summary:"
-            echo "$RESPONSE" | jq '.summary'
-            
-            # Show mode-specific results
-            if [ "$MODE" = "songs_only" ]; then
-              echo "🎵 Songs-only mode results:"
-              echo "$RESPONSE" | jq '.bronze_to_silver'
-            fi
-          else
-            echo "❌ Pipeline failed"
-            exit 1
-          fi
-
-  # ============================================================================
   # JOB 5: MONITORING & ALERTS
   # ============================================================================
   monitoring:

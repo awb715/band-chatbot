@@ -1,0 +1,50 @@
+name: 🥈 Silver Ad-hoc Processing
+
+on:
+  workflow_dispatch:
+    inputs:
+      table_name:
+        description: 'Specific table to process (leave empty for all)'
+        required: false
+        default: ''
+        type: string
+      force_reprocess:
+        description: 'Force reprocess (reset flags)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+jobs:
+  silver-ad-hoc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run Silver Processing
+        run: |
+          echo "🥈 Ad-hoc Silver processing"
+          echo "Table: '${{ github.event.inputs.table_name }}'"
+          echo "Force: ${{ github.event.inputs.force_reprocess }}"
+
+          if [ -n "${{ github.event.inputs.table_name }}" ]; then
+            PAYLOAD='{"table_name": "'${{ github.event.inputs.table_name }}'", "force_reprocess": '${{ github.event.inputs.force_reprocess }}'}'
+          else
+            PAYLOAD='{"mode": "silver_only", "force_reprocess": '${{ github.event.inputs.force_reprocess }}'}'
+          fi
+
+          RESPONSE=$(curl -X POST \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$SUPABASE_URL/functions/v1/process_tabular_data")
+
+          echo "Response: $RESPONSE"
+
+          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
+            echo "✅ Success"
+          else
+            echo "❌ Failed"
+            exit 1
+          fi
