@@ -82,7 +82,7 @@ serve(async (req) => {
         }
       }
       
-      // Call the master ETL function in silver schema via PostgREST
+      // Call the new production Silver ETL function via PostgREST
       const rpcResp = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/rpc/process_all_tables`, {
         method: 'POST',
         headers: {
@@ -157,7 +157,17 @@ serve(async (req) => {
         const errText = await rpcResp.text()
         throw new Error(`Silver RPC failed: ${rpcResp.status} ${errText}`)
       }
-      silverResults = await rpcResp.json()
+      
+      // Individual table functions return INT, convert to our expected JSON format
+      const recordCount = await rpcResp.json()
+      silverResults = {
+        success: true,
+        total_records_processed: recordCount,
+        table_results: {
+          [table_name]: recordCount
+        },
+        processing_time_ms: 0 // Individual calls don't track timing
+      }
 
       // Diagnostics after ETL
       const silverCountRes = await supabase
@@ -180,7 +190,7 @@ serve(async (req) => {
         }))
       }
     } else {
-      // Process all tables (default) via PostgREST
+      // Process all tables (default) via PostgREST - using new production Silver ETL
       const rpcResp = await fetch(`${Deno.env.get('SUPABASE_URL')}/rest/v1/rpc/process_all_tables`, {
         method: 'POST',
         headers: {
@@ -204,6 +214,19 @@ serve(async (req) => {
     }
 
     console.log('✅ Silver processing completed:', silverResults)
+    
+    // Log detailed results if available
+    if (silverResults && typeof silverResults === 'object') {
+      if (silverResults.total_records_processed) {
+        console.log(`📊 Total Silver records processed: ${silverResults.total_records_processed}`)
+      }
+      if (silverResults.table_results) {
+        console.log('📋 Silver processing breakdown by table:', silverResults.table_results)
+      }
+      if (silverResults.processing_time_ms) {
+        console.log(`⏱️ Silver processing time: ${silverResults.processing_time_ms}ms`)
+      }
+    }
 
     // ============================================================================
     // STEP 2: PROCESS SILVER → GOLD (disabled unless explicitly requested)
@@ -224,11 +247,24 @@ serve(async (req) => {
     }
 
     // ============================================================================
-    // STEP 3: CALCULATE TOTALS
+    // STEP 3: CALCULATE TOTALS (handle new JSON format from Silver ETL)
     // ============================================================================
-    const totalSilverProcessed = silverResults?.reduce((sum, row) => sum + (row.processed_count || 0), 0) || 0
+    let totalSilverProcessed = 0;
+    let totalErrors = 0;
+    
+    if (silverResults) {
+      if (Array.isArray(silverResults)) {
+        // Legacy format (array of results)
+        totalSilverProcessed = silverResults.reduce((sum, row) => sum + (row.processed_count || 0), 0);
+        totalErrors = silverResults.reduce((sum, row) => sum + (row.error_count || 0), 0);
+      } else if (typeof silverResults === 'object') {
+        // New format (JSON object)
+        totalSilverProcessed = silverResults.total_records_processed || 0;
+        totalErrors = 0; // New ETL logs errors separately
+      }
+    }
+    
     const totalGoldProcessed = goldResults?.reduce((sum, row) => sum + (row.processed_count || 0), 0) || 0
-    const totalErrors = silverResults?.reduce((sum, row) => sum + (row.error_count || 0), 0) || 0
 
     // ============================================================================
     // STEP 4: LOG PROCESSING STATUS
@@ -240,7 +276,8 @@ serve(async (req) => {
       records_processed: totalSilverProcessed,
       errors: totalErrors,
       completed_at: new Date().toISOString(),
-      processing_time_ms: silverResults?.reduce((sum, row) => sum + (row.processing_time_ms || 0), 0) || 0
+      processing_time_ms: (silverResults?.processing_time_ms) || 
+                       (Array.isArray(silverResults) ? silverResults.reduce((sum, row) => sum + (row.processing_time_ms || 0), 0) : 0)
     }
 
     // Insert processing status
@@ -260,7 +297,8 @@ serve(async (req) => {
         processed_tables: silverResults?.length || 0,
         total_records_processed: totalSilverProcessed,
         total_errors: totalErrors,
-        results: silverResults
+        results: silverResults,
+        processing_time_ms: (silverResults?.processing_time_ms) || 0
       },
       gold_layer: goldResults ? {
         processed_tables: goldResults.length,
