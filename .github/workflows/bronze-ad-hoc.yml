@@ -8,16 +8,16 @@ on:
         required: true
         type: choice
         options:
-          - setlists
-          - songs
-          - shows
-          - venues
-          - latest
-          - metadata
-          - links
-          - uploads
-          - appearances
-          - jamcharts
+          - Setlists
+          - Songs
+          - Shows
+          - Venues
+          - Latest
+          - Metadata
+          - Links
+          - Uploads
+          - Appearances
+          - Jamcharts
       mode:
         description: 'Processing mode'
         required: true
