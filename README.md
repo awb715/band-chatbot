@@ -1,6 +1,6 @@
-# 🎵 Band Chatbot - Tabular Data Pipeline
+# 🎵 Band Chatbot — Tabular Data + Edge Functions
 
-A production-focused data pipeline that ingests ElGoose APIs and transforms them into clean Bronze → Silver → Gold tables optimized for chatbot queries, analytics, and dashboards.
+Production-focused ingestion and ETL for ElGoose APIs using Supabase Edge Functions and Postgres. Outputs clean Bronze → Silver → (optional) Gold tables optimized for chatbot queries, analytics, and dashboards.
 
 ## 🎯 What This Does
 
@@ -25,12 +25,14 @@ ElGoose APIs → Edge Functions → Postgres (Bronze/Silver/Gold) → Chat/Analy
 ## 📁 Project Structure
 
 - `supabase/` – Database schemas, migrations, and Edge Functions
-  - `functions/ingest_raw_data/` – Bronze ingestion
-  - `functions/process_tabular_data/` – Silver/Gold processing
+  - `functions/ingest_raw_data/` – Bronze ingestion (incremental by default)
+  - `functions/process_tabular_data/` – Orchestrates Silver ETL; optional Gold
   - `migrations/` – SQL migrations for schemas, roles, policies
+  - `seed.sql` – Minimal seed to satisfy local resets
   - `README.md` – Backend details
-- `tests/` – Smoke tests and utilities (see `tests/README.md`)
-- `scripts/` – Local data utilities
+- `tests/` – Smoke tests (see `tests/README.md`)
+- `scripts/` – Local data utilities and year JSON snapshots
+- `archive_offset_attempts/` – Archived API pagination experiments (JSON)
 
 ## 🚀 Quick Start
 
@@ -41,17 +43,13 @@ npm install
 
 2. Configure environment
 ```bash
-# Supabase
+# Supabase (required)
 SUPABASE_URL=...
 SUPABASE_SERVICE_ROLE_KEY=...
-# Optional model keys if used elsewhere
+
+# Optional
 OPENAI_API_KEY=...
-# GitHub (for MCP GitHub server)
-# Create a classic PAT with repo scope or a fine-grained PAT with needed perms
-# On Windows PowerShell, set for current session:
-#   $env:GITHUB_TOKEN = "<your_token>"
-# Or use a .env file loaded by Cursor/your shell
-GITHUB_TOKEN=...
+GITHUB_TOKEN=... # for MCP GitHub server in Cursor
 ```
 
 3. Start local Supabase and serve functions
@@ -72,17 +70,17 @@ curl -X POST "$SUPABASE_URL/functions/v1/ingest_raw_data" \
   -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
   -H "Content-Type: application/json" -d '{"mode":"incremental"}'
 
-# Silver/Gold processing (Edge Function)
+# Silver processing (Edge Function)
 curl -X POST "$SUPABASE_URL/functions/v1/process_tabular_data" \
   -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
-  -H "Content-Type: application/json" -d '{"mode":"complete"}'
+  -H "Content-Type: application/json" -d '{"mode":"silver_only"}'
 ```
 
 ## 🔄 How It Works
 
 - GitHub Actions (or manual calls) trigger Edge Functions
-- `ingest_raw_data` fetches recent API data into `raw_data.*` and sets `is_processed=false`
-- `process_tabular_data` transforms Bronze → Silver and aggregates to Gold
+- `ingest_raw_data` fetches recent API data into `raw_data.*` (incremental window; dedup/update by external ID)
+- `process_tabular_data` transforms Bronze → Silver (via PostgREST RPC, idempotent). Gold is optional.
 - Idempotent and incremental; safe to re-run
 
 ## 📚 Documentation
@@ -94,9 +92,11 @@ curl -X POST "$SUPABASE_URL/functions/v1/process_tabular_data" \
 - Tests overview: `tests/README.md`
 - Archived plans and older docs: `supabase/_archive/`
 
-## 🔧 GitHub MCP in Cursor
+GitHub workflows overview moved to `.github/WORKFLOWS.md`.
 
-- Ensure `.cursor/mcp.json` contains a `github` server entry. This repo includes:
+## 🔧 GitHub MCP in Cursor (optional)
+
+- Ensure `.cursor/mcp.json` contains a `github` server entry. Example:
 
 ```json
 {
@@ -131,14 +131,19 @@ curl -X POST "$SUPABASE_URL/functions/v1/process_tabular_data" \
 
 ## 🔐 Security
 
-- Roles and RLS for Bronze/Silver/Gold
-- Service role required for writes; public views for safe reads where applicable
+- Roles and RLS enforced across schemas; service role required for writes
+- Do not commit secrets. `.cursor/` is ignored; keep tokens in env vars
+- If a token is ever committed, rotate it immediately
+
+## 🗂️ Data Files
+- Large JSON snapshots live under `scripts/json/` and `archive_offset_attempts/`
+- Keep only essential examples in Git; consider Git LFS for very large data
 
 ## 📈 Status
 
 - Silver schema: songs, venues, shows, setlists ready
-- ETL functions: core functions implemented; orchestration function available
-- Designed for <500ms typical chatbot queries with indexes and helpers
+- ETL functions: Bronze ingestion and Silver orchestration implemented
+- Designed for fast chatbot queries with proper indexes
 
 ---
 
