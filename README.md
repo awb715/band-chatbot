@@ -1,80 +1,145 @@
-# 🎵 Band Chatbot - RAG System
+# 🎵 Band Chatbot - Tabular Data Pipeline
 
-A production-ready Retrieval-Augmented Generation (RAG) chatbot system that automatically ingests and processes music data from ElGoose APIs to power intelligent band-related conversations.
+A production-focused data pipeline that ingests ElGoose APIs and transforms them into clean Bronze → Silver → Gold tables optimized for chatbot queries, analytics, and dashboards.
 
 ## 🎯 What This Does
 
-This system automatically collects and processes music data to create a knowledge base for a chatbot that can answer questions about:
-- **Songs**: Track catalog, original artists, creation dates
-- **Shows**: Concert dates, venues, setlists
-- **Venues**: Location information, venue details
-- **Setlists**: What songs were played at which shows
-- **And more**: Latest updates, metadata, links, uploads
+This system automatically collects and processes music data so you can answer questions about:
+- **Songs**: catalog, original artists
+- **Shows**: dates, venues
+- **Venues**: locations, stats
+- **Setlists**: what was played where and when
 
 ## 🏗️ High-Level Architecture
 
 ```
-ElGoose APIs → Edge Functions → Supabase Database → RAG Pipeline → Chatbot
-     ↓              ↓              ↓              ↓
-  Raw Data    Smart Processing   Vector Store   AI Responses
+ElGoose APIs → Edge Functions → Postgres (Bronze/Silver/Gold) → Chat/Analytics
+     ↓              ↓                         ↓                      ↓
+  Raw JSON     Orchestrated ETL         Clean & Indexed         Fast Queries
 ```
 
-**The system runs automatically** - no manual intervention needed once deployed.
+- **Bronze (raw_data.*)**: raw JSON from APIs
+- **Silver (silver.*)**: normalized, typed tables for queries
+- **Gold (gold.*)**: analytics-ready aggregates and helpers
 
 ## 📁 Project Structure
 
-- **`.github/`** - Automated workflows that run daily
-- **`supabase/`** - Database and serverless functions
-- **`tests/`** - Testing and verification scripts
+- `supabase/` – Database schemas, migrations, and Edge Functions
+  - `functions/ingest_raw_data/` – Bronze ingestion
+  - `functions/process_tabular_data/` – Silver/Gold processing
+  - `migrations/` – SQL migrations for schemas, roles, policies
+  - `README.md` – Backend details
+- `tests/` – Smoke tests and utilities (see `tests/README.md`)
+- `scripts/` – Local data utilities
 
 ## 🚀 Quick Start
 
-1. **Clone & Install**
-   ```bash
-   git clone https://github.com/your-username/band-chatbot.git
-   cd band-chatbot && npm install
-   ```
+1. Install
+```bash
+npm install
+```
 
-2. **Configure Environment**
-   ```bash
-   # Edit .env with your Supabase and OpenAI credentials
-   ```
+2. Configure environment
+```bash
+# Supabase
+SUPABASE_URL=...
+SUPABASE_SERVICE_ROLE_KEY=...
+# Optional model keys if used elsewhere
+OPENAI_API_KEY=...
+# GitHub (for MCP GitHub server)
+# Create a classic PAT with repo scope or a fine-grained PAT with needed perms
+# On Windows PowerShell, set for current session:
+#   $env:GITHUB_TOKEN = "<your_token>"
+# Or use a .env file loaded by Cursor/your shell
+GITHUB_TOKEN=...
+```
 
-3. **Deploy**
-   ```bash
-   npm run db:push && npm run functions:deploy
-   ```
+3. Start local Supabase and serve functions
+```bash
+npx supabase start
+npx supabase functions serve
+```
 
-4. **Verify**
-   ```bash
-   npm test
-   ```
+4. Apply migrations
+```bash
+npx supabase db push
+```
 
-## 📊 Current Status
+5. Run processing (local)
+```bash
+# Bronze ingestion (Edge Function)
+curl -X POST "$SUPABASE_URL/functions/v1/ingest_raw_data" \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "Content-Type: application/json" -d '{"mode":"incremental"}'
 
-✅ **9,332+ records** automatically processed  
-✅ **9 API endpoints** monitored daily  
-✅ **Production-ready** with error handling  
-✅ **Zero maintenance** - runs automatically  
+# Silver/Gold processing (Edge Function)
+curl -X POST "$SUPABASE_URL/functions/v1/process_tabular_data" \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "Content-Type: application/json" -d '{"mode":"complete"}'
+```
 
 ## 🔄 How It Works
 
-1. **Daily at 2 AM UTC**: GitHub Actions triggers data collection
-2. **Smart Processing**: Only processes recent/new data (incremental updates)
-3. **Parallel Processing**: 3 endpoints processed simultaneously for speed
-4. **Health Monitoring**: System checks itself and alerts on issues
-5. **Ready for RAG**: Data is prepared for AI-powered conversations
+- GitHub Actions (or manual calls) trigger Edge Functions
+- `ingest_raw_data` fetches recent API data into `raw_data.*` and sets `is_processed=false`
+- `process_tabular_data` transforms Bronze → Silver and aggregates to Gold
+- Idempotent and incremental; safe to re-run
 
-## 📚 Detailed Documentation
+## 📚 Documentation
 
-- **[GitHub Actions](.github/README.md)** - Automated workflow details
-- **[Supabase Backend](supabase/README.md)** - Database and functions
-- **[Testing](tests/README.md)** - How to test and verify
+- Supabase backend: `supabase/README.md`
+- Orchestration overview: `supabase/ORCHESTRATION_ARCHITECTURE.md`
+- Silver layer summary: `supabase/PRODUCTION_SILVER_LAYER_SUMMARY.md`
+- Tabular implementation summary: `supabase/TABULAR_IMPLEMENTATION_SUMMARY.md`
+- Tests overview: `tests/README.md`
+- Archived plans and older docs: `supabase/_archive/`
 
-## 🎯 Next Phase
+## 🔧 GitHub MCP in Cursor
 
-This system is ready for **Phase 3**: Building the actual RAG chatbot that will use this data to answer questions about the band's music, shows, and history.
+- Ensure `.cursor/mcp.json` contains a `github` server entry. This repo includes:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github@latest"]
+    }
+  }
+}
+```
+
+- Set `GITHUB_TOKEN` in your environment before starting Cursor chat tools.
+  - PowerShell (session only):
+    - `$env:GITHUB_TOKEN = "<your_token>"`
+  - Or add to `.env` loaded by your shell.
+
+- In Cursor, the AI will now have GitHub tools available (list issues/PRs, read files, comment, etc.) when you enable tools.
+
+## ✅ Active vs Archived
+
+- **Active**:
+  - `supabase/README.md`
+  - `supabase/ORCHESTRATION_ARCHITECTURE.md`
+  - `supabase/PRODUCTION_SILVER_LAYER_SUMMARY.md`
+  - `supabase/TABULAR_IMPLEMENTATION_SUMMARY.md`
+  - `supabase/functions/*`, `supabase/migrations/*`
+  - `tests/README.md`
+- **Archived**:
+  - `supabase/_archive/*` (older plans and drafts)
+  - `tests/_archive/*` (older test scripts)
+
+## 🔐 Security
+
+- Roles and RLS for Bronze/Silver/Gold
+- Service role required for writes; public views for safe reads where applicable
+
+## 📈 Status
+
+- Silver schema: songs, venues, shows, setlists ready
+- ETL functions: core functions implemented; orchestration function available
+- Designed for <500ms typical chatbot queries with indexes and helpers
 
 ---
 
-*Built with Supabase, OpenAI, and GitHub Actions*
+Built with Supabase Edge Functions and Postgres.
