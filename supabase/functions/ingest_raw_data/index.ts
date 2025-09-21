@@ -39,7 +39,7 @@ const corsHeaders = {
 // PROCESSING LIMITS PER ENDPOINT
 // These limits are optimized for performance and timeout prevention
 const PROCESSING_LIMITS = {
-  setlists: 100,    // 3-10 shows (10-20 songs each)
+  setlists: 1000,   // INCREASED: Setlists can be up to 4k, need higher limit for recent data
   songs: 100,       // 100 songs
   shows: 50,        // 50 shows
   venues: 50,       // 50 venues
@@ -104,7 +104,7 @@ serve(async (req) => {
     
     // Parse request body for endpoint and mode
     const body = await req.json().catch(() => ({}))
-    const { endpoint, mode = 'incremental' } = body
+    const { endpoint, mode = 'incremental', yearData } = body
     
     if (endpoint) {
       query = query.eq('name', endpoint)
@@ -112,6 +112,12 @@ serve(async (req) => {
     }
     
     console.log(`🔄 Processing mode: ${mode}`)
+    
+    // If yearData is provided, we need setlists endpoint info for processing
+    if (yearData && !endpoint) {
+      query = query.eq('name', 'Setlists')
+      console.log(`📁 Year data provided, defaulting to Setlists endpoint`)
+    }
     
     const { data: endpoints, error: endpointsError } = await query
 
@@ -133,7 +139,7 @@ serve(async (req) => {
       
       // Track processing time for performance monitoring
       const startTime = Date.now()
-      const result = await processEndpoint(supabaseClient, endpoint, mode)
+      const result = await processEndpoint(supabaseClient, endpoint, mode, yearData)
       const processingTime = Date.now() - startTime
       
       // Store results with timing information
@@ -191,7 +197,12 @@ serve(async (req) => {
  * @param mode - Processing mode ('incremental' or 'manual')
  * @returns IngestionResult with statistics about the processing
  */
-async function processEndpoint(supabaseClient: any, endpoint: ApiSource, mode: string = 'incremental'): Promise<IngestionResult> {
+async function processEndpoint(
+  supabaseClient: any,
+  endpoint: ApiSource,
+  mode: string = 'incremental',
+  yearData?: any
+): Promise<IngestionResult> {
   // Initialize result tracking for this endpoint
   const result: IngestionResult = {
     endpoint: endpoint.name,
@@ -203,65 +214,132 @@ async function processEndpoint(supabaseClient: any, endpoint: ApiSource, mode: s
   }
 
   try {
-    // STEP 1: Get processing limit for this endpoint
+    // STEP 1: Get processing limit for this endpoint (handle case variations)
     const endpointKey = endpoint.name.toLowerCase() as keyof typeof PROCESSING_LIMITS
     const limit = PROCESSING_LIMITS[endpointKey] || 50
-    console.log(`📊 Processing limit for ${endpoint.name}: ${limit} records`)
+    console.log(`📊 Processing limit for ${endpoint.name} (${endpointKey}): ${limit} records`)
     
-    // STEP 2: Build optimized API URL with sorting and limits
-    let apiUrl = endpoint.url
+    // STEP 2: Handle data source - either from yearData or API
+    let allData = []
     
-    if (mode === 'incremental') {
-      // For incremental mode, add limit for recent data (API doesn't support sorting)
-      const separator = apiUrl.includes('?') ? '&' : '?'
-      apiUrl = `${apiUrl}${separator}limit=${limit}`
-      console.log(`🔄 Incremental mode: fetching data with limit ${limit}`)
+    if (yearData) {
+      // Use provided year data instead of API call
+      console.log(`📁 Using provided year data with ${yearData.length} records`)
+      allData = yearData
+    } else if (endpoint.name.toLowerCase() === 'setlists') {
+      // Setlists needs special pagination handling due to large dataset
+      console.log('🎵 Setlists endpoint detected - implementing pagination strategy')
+      
+      if (mode === 'incremental') {
+        // For incremental: Start from the end (most recent data) and work backwards
+        // Get the total count first, then fetch recent pages
+        console.log('🔄 Incremental mode: fetching recent setlists from end of dataset')
+        
+        // Estimate total records and start from recent data
+        const startOffset = Math.max(0, 8000) // Start from where recent data likely is
+        const fetchLimit = 1000
+        
+        const apiUrl = `${endpoint.url}?offset=${startOffset}&limit=${fetchLimit}`
+        console.log(`📥 Fetching recent data from ${apiUrl}`)
+        
+        const response = await fetch(apiUrl)
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+        
+        const responseData = await response.json()
+        allData = responseData.data || responseData || []
+        
+      } else {
+        // For manual mode: Implement pagination to get ALL data
+        console.log('🔄 Manual mode: implementing full pagination for complete dataset')
+        
+        let offset = 0
+        const pageSize = 4000 // Max API limit
+        let hasMoreData = true
+        
+        while (hasMoreData && allData.length < 20000) { // Safety limit
+          const apiUrl = `${endpoint.url}?offset=${offset}&limit=${pageSize}`
+          console.log(`📥 Fetching page at offset ${offset} from ${apiUrl}`)
+          
+          const response = await fetch(apiUrl)
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+          }
+          
+          const responseData = await response.json()
+          const pageData = responseData.data || responseData || []
+          
+          if (Array.isArray(pageData) && pageData.length > 0) {
+            allData = allData.concat(pageData)
+            offset += pageData.length
+            hasMoreData = pageData.length === pageSize // Continue if we got a full page
+            console.log(`📊 Page complete: ${pageData.length} records, total so far: ${allData.length}`)
+          } else {
+            hasMoreData = false
+            console.log('📊 No more data available')
+          }
+          
+          // Small delay to be respectful to the API
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+        
+        console.log(`🎉 Pagination complete: ${allData.length} total records fetched`)
+      }
+      
     } else {
-      // For manual mode, use higher limit for full processing
-      const manualLimit = limit * 2
-      const separator = apiUrl.includes('?') ? '&' : '?'
-      apiUrl = `${apiUrl}${separator}limit=${manualLimit}`
-      console.log(`🔄 Manual mode: fetching full data with limit ${manualLimit}`)
+      // For other endpoints, use the original single-request approach
+      const apiUrl = endpoint.url
+      console.log(`📥 Fetching data from ${apiUrl}`)
+      
+      const response = await fetch(apiUrl)
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+      
+      const responseData = await response.json()
+      allData = responseData.data || responseData || []
     }
     
-    // STEP 3: Fetch data from the optimized API URL
-    console.log(`📥 Fetching data from ${apiUrl}`)
-    const response = await fetch(apiUrl)
-    
-    // Check if the API request was successful
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-    }
-
-    // Parse the JSON response
-    const responseData = await response.json()
-    
-    // ElGoose API returns data in format: {"error": false, "data": [...]}
-    // Extract the actual data array from the response
-    const data = responseData.data || responseData
+    // Set the data for processing
+    const data = allData
     result.total_fetched = Array.isArray(data) ? data.length : 1
+    console.log(`📊 Total records received: ${result.total_fetched}`)
 
-    console.log(`📊 Received ${result.total_fetched} records`)
-
-    // STEP 4: Filter data for incremental mode (7-day window)
+    // STEP 3: Smart filtering and processing strategy
     let recordsToProcess = Array.isArray(data) ? data : [data]
     
     if (mode === 'incremental') {
-      const cutoffDate = new Date()
-      cutoffDate.setDate(cutoffDate.getDate() - INCREMENTAL_WINDOW_DAYS)
-      
-      const originalCount = recordsToProcess.length
-      recordsToProcess = recordsToProcess.filter(record => {
-        const recordDate = record.updated_at || record.created_at || record.showdate
-        return recordDate && new Date(recordDate) >= cutoffDate
-      })
-      
-      console.log(`📅 Filtered from ${originalCount} to ${recordsToProcess.length} recent records (last ${INCREMENTAL_WINDOW_DAYS} days)`)
-      
-      // If no recent records, process a few anyway to keep data flowing
-      if (recordsToProcess.length === 0 && originalCount > 0) {
-        recordsToProcess = Array.isArray(data) ? data.slice(0, Math.min(10, data.length)) : [data]
-        console.log(`📅 No recent records found, processing ${recordsToProcess.length} records anyway`)
+      if (endpoint.name.toLowerCase() === 'setlists') {
+        // For setlists incremental: we already fetched from offset 8000+ (recent data)
+        // Process the most recent records we got
+        console.log(`📅 Incremental setlists: processing all ${recordsToProcess.length} recent records from offset 8000+`)
+      } else {
+        // For other endpoints, use date-based filtering
+        const cutoffDate = new Date()
+        cutoffDate.setDate(cutoffDate.getDate() - INCREMENTAL_WINDOW_DAYS)
+        
+        const originalCount = recordsToProcess.length
+        recordsToProcess = recordsToProcess.filter(record => {
+          const recordDate = record.updated_at || record.created_at || record.showdate
+          return recordDate && new Date(recordDate) >= cutoffDate
+        })
+        
+        console.log(`📅 Filtered from ${originalCount} to ${recordsToProcess.length} recent records (last ${INCREMENTAL_WINDOW_DAYS} days)`)
+        
+        if (recordsToProcess.length === 0 && originalCount > 0) {
+          recordsToProcess = Array.isArray(data) ? data.slice(0, Math.min(100, data.length)) : [data]
+          console.log(`📅 No recent records by date, processing ${recordsToProcess.length} latest records`)
+        }
+      }
+    } else {
+      // Manual mode: process all fetched records (could be 10k+ for setlists)
+      // Apply reasonable batch limits to prevent timeouts
+      if (recordsToProcess.length > 5000) {
+        recordsToProcess = recordsToProcess.slice(0, 5000)
+        console.log(`📊 Manual mode: limited to first ${recordsToProcess.length} records to prevent timeouts`)
+      } else {
+        console.log(`📊 Manual mode: processing all ${recordsToProcess.length} fetched records`)
       }
     }
     
